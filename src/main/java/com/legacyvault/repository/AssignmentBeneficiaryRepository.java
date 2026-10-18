@@ -11,5 +11,7 @@ public interface AssignmentBeneficiaryRepository extends JpaRepository<Assignmen
 
     List<AssignmentBeneficiary> findByAssignmentId(String assignmentId);
 
+    boolean existsByAssignmentIdAndBeneficiaryContactId(String assignmentId, String beneficiaryContactId);
+
     void deleteByAssignmentId(String assignmentId);
 }

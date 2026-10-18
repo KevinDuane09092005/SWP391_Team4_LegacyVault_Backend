@@ -1,0 +1,129 @@
+@startuml
+title LegacyVault Flow 5 - Legal Verification
+
+actor "Digital Executor / Trustee" as Executor
+actor "Legal Verifier" as Verifier
+participant "LegacyVault Web UI" as UI
+participant "LegalVerificationCaseController" as Controller
+participant "LegalVerificationService" as Service
+participant "HandoverActivationGateway\n(existing DMS + assignment records)" as Activation
+participant "LocalEncryptedDocumentStorage\n(AES-GCM, private disk)" as Storage
+database "MySQL" as DB
+
+note over Executor,DB
+Only an authenticated, authorized user may act. The executor account email
+must match the executor contact assigned to the selected asset assignment.
+The reviewer must have the LEGAL_VERIFIER role. Uploaded files are encrypted
+at rest using a locally configured AES-GCM key.
+Flow 5 records an internal review outcome; it does not decide inheritance
+rights, send notifications, decrypt assets, or invoke Flow 6.
+end note
+
+Executor -> UI: Start verification for beneficiary + assignment
+UI -> Controller: POST /api/v1/legal-verification-cases {handoverCaseId, assignmentId, beneficiaryContactId}
+Controller -> Service: createDraft(principal, handoverCaseId, assignmentId, beneficiaryContactId)
+Service -> Activation: Verify DMS triggered, executor contact, assignment, beneficiary link
+alt handover not triggered or assignment does not match
+  Activation --> Service: 403 / 404 / 409
+  Service --> Controller: Error response
+  Controller --> UI: Show authorization or state error
+else handover and assignment are valid
+  Activation --> Service: Existing records confirmed
+  Service -> DB: Save DRAFT case + CASE_CREATED event
+  DB --> Service: caseId
+  Service --> Controller: Case response
+  Controller --> UI: 201 Created
+end
+
+loop Upload death certificate and applicable supporting evidence
+  Executor -> UI: Choose document type and file
+  UI -> Controller: POST /{caseId}/documents (multipart)
+  Controller -> Service: uploadDocument(principal, caseId, file)
+  Service -> Service: Check owner, case state, size, and file signature
+  alt encryption key is not configured
+    Service -> Storage: store(documentId, bytes)
+    Storage --> Service: 503 Storage key required
+    Service --> Controller: Error response
+    Controller --> UI: 503 Service Unavailable
+  else private encrypted storage configured
+    Service -> Storage: Encrypt with AES-GCM and store privately
+    Storage --> Service: storageKey + SHA-256
+    Service -> DB: Save metadata + DOCUMENT_UPLOADED event
+    DB --> Service: Saved
+    Service --> Controller: Document metadata only
+    Controller --> UI: 201 Created
+  end
+end
+
+Executor -> UI: Submit verification request
+UI -> Controller: POST /{caseId}/submit
+Controller -> Service: submit(principal, caseId)
+Service -> DB: Check for DEATH_CERTIFICATE metadata
+alt Required evidence missing
+  Service --> Controller: 422 REQUIRED_EVIDENCE_MISSING
+  Controller --> UI: Show validation issue
+else Required evidence present
+  Service -> DB: DRAFT/NEEDS_INFORMATION to SUBMITTED + event
+  DB --> Service: Saved
+  Service --> Controller: Updated case
+  Controller --> UI: 200 OK
+end
+
+Verifier -> UI: Open review queue
+UI -> Controller: GET /api/v1/legal-verification-cases?status=SUBMITTED
+Controller -> Service: listCases(principal)
+Service -> DB: Find unassigned SUBMITTED + cases assigned to this reviewer
+DB --> Service: Scoped case summaries
+Service --> Controller: Queue response
+Controller --> UI: 200 OK
+
+Verifier -> UI: Claim submitted case
+UI -> Controller: POST /{caseId}/start-review
+Controller -> Service: startReview(principal, caseId)
+Service -> DB: Assign reviewer; SUBMITTED to IN_REVIEW + event
+DB --> Service: Updated case
+Service --> Controller: Case response
+Controller --> UI: 200 OK
+
+Verifier -> UI: Inspect an evidence document
+UI -> Controller: GET /{caseId}/documents/{documentId}/content
+Controller -> Service: authorizeAndRead(principal, caseId, documentId)
+Service -> DB: Check case, reviewer assignment, and document metadata
+DB --> Service: Authorized storage key
+Service -> Storage: read(private storage key)
+Storage --> Service: File bytes
+Service --> Controller: Authorized file content
+Controller --> UI: File response
+
+alt More information is needed
+  Verifier -> UI: Enter required information and reason
+  UI -> Controller: POST /{caseId}/request-information
+  Controller -> Service: requestInformation(principal, caseId, reason)
+  Service -> DB: IN_REVIEW to NEEDS_INFORMATION + event
+  DB --> Service: Saved
+  Service --> Controller: Updated case
+  Controller --> UI: 200 OK
+  note over Executor,UI
+  No notification integration is wired yet; the executor sees the change
+  by refreshing/polling the case.
+  end note
+  Executor -> UI: Upload missing evidence and resubmit
+  UI -> Controller: POST /{caseId}/documents, then /{caseId}/submit
+  Controller -> Service: Upload and resubmit as authenticated executor
+  Service -> DB: Save document metadata, then NEEDS_INFORMATION to SUBMITTED
+else Review is complete
+  Verifier -> UI: Record APPROVED or REJECTED with reason
+  UI -> Controller: POST /{caseId}/decision
+  Controller -> Service: decide(principal, caseId, outcome, reason)
+  Service -> Service: Check role, assigned reviewer, and state
+  Service -> DB: Save final status + decision event
+  DB --> Service: Saved
+  Service --> Controller: Decision response
+  Controller --> UI: 200 OK
+  note over Service,DB
+  APPROVED is only a Flow 5 outcome. Flow 6 must separately verify identity,
+  asset assignment, and release conditions. No handover call occurs here.
+  end note
+end
+
+@enduml

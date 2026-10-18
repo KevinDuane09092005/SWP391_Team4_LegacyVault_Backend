@@ -3,6 +3,7 @@ HELP.md
 ### Maven ###
 
 target/
+var/
 
 .mvn/wrapper/maven-wrapper.jar
 
