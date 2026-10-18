@@ -2,6 +2,7 @@ package com.legacyvault.controller;
 
 import com.legacyvault.dto.AssignmentResponse;
 import com.legacyvault.dto.CreateAssignmentRequest;
+import com.legacyvault.dto.UpdateAssignmentRequest;
 import com.legacyvault.service.AssignmentService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -78,6 +79,28 @@ public class AssignmentController {
             return ResponseEntity.ok(assignment);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PutMapping("/asset/{assetId}")
+    public ResponseEntity<?> updateAssignmentByAssetId(
+            Authentication authentication,
+            @PathVariable("assetId") String assetId,
+            @Valid @RequestBody UpdateAssignmentRequest request
+    ) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            AssignmentResponse assignment = assignmentService.updateAssignmentByAssetId(ownerId, assetId, request);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Assignment updated successfully",
+                    "assignment", assignment
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 

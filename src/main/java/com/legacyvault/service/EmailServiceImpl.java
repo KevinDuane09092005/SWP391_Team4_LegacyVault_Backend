@@ -136,4 +136,30 @@ public class EmailServiceImpl implements EmailService {
             logger.warn("Không thể gửi thông báo kích hoạt bàn giao tới {}: {}", toEmail, e.getMessage());
         }
     }
+
+    @Override
+    public void sendHandoverAccessCodeEmail(String toEmail, String beneficiaryName, String ownerName, String caseNumber, String accessCode) {
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setFrom(fromEmail);
+            message.setTo(toEmail);
+            message.setSubject("[LegacyVault - Security Notification] Digital Estate Handover Authorized - " + caseNumber);
+            message.setText("Dear " + (beneficiaryName != null ? beneficiaryName : "Beneficiary") + ",\n\n"
+                    + "The legal verification process for the digital estate of " + (ownerName != null ? ownerName : "the Vault Owner")
+                    + " (Case Ref: " + caseNumber + ") has been successfully verified and approved by the certified Legal Verifier.\n\n"
+                    + "You are designated as an authorized recipient of digital inheritance assets.\n"
+                    + "Your Secure Handover Access Code is:\n\n"
+                    + "    " + accessCode + "\n\n"
+                    + "Please proceed to the LegacyVault Beneficiary Access Portal to verify your identity and access your allocated assets.\n\n"
+                    + "Sincerely,\n"
+                    + "LegacyVault Security & Estate Administration");
+
+            mailSender.send(message);
+            logger.info("Đã gửi email Access Code tới Beneficiary: {}", toEmail);
+        } catch (Exception e) {
+            logger.warn("Không thể gửi email Access Code tới {}: {}. (Mã Access Code phục vụ dev/test: {})",
+                    toEmail, e.getMessage(), accessCode);
+        }
+    }
 }
+

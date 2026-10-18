@@ -2,6 +2,7 @@ package com.legacyvault.controller;
 
 import com.legacyvault.dto.AssetResponse;
 import com.legacyvault.dto.CreateAssetRequest;
+import com.legacyvault.dto.UpdateAssetRequest;
 import com.legacyvault.service.AssetService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -25,15 +26,13 @@ public class AssetController {
     @PostMapping
     public ResponseEntity<?> createAsset(
             Authentication authentication,
-            @Valid @RequestBody CreateAssetRequest request
-    ) {
+            @Valid @RequestBody CreateAssetRequest request) {
         try {
             String ownerId = getAuthenticatedUserId(authentication);
             AssetResponse created = assetService.createAsset(ownerId, request);
             return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
                     "message", "Asset created and encrypted successfully",
-                    "asset", created
-            ));
+                    "asset", created));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -53,14 +52,33 @@ public class AssetController {
     @GetMapping("/{assetId}")
     public ResponseEntity<?> getAssetDetail(
             Authentication authentication,
-            @PathVariable("assetId") String assetId
-    ) {
+            @PathVariable("assetId") String assetId) {
         try {
             String ownerId = getAuthenticatedUserId(authentication);
             AssetResponse asset = assetService.getAssetDetail(ownerId, assetId);
             return ResponseEntity.ok(asset);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PutMapping("/{assetId}")
+    public ResponseEntity<?> updateAsset(
+            Authentication authentication,
+            @PathVariable("assetId") String assetId,
+            @Valid @RequestBody UpdateAssetRequest request) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            AssetResponse updated = assetService.updateAsset(ownerId, assetId, request);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Asset updated successfully",
+                    "asset", updated));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 

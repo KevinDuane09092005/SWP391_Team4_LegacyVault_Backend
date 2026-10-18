@@ -2,6 +2,7 @@ package com.legacyvault.service;
 
 import com.legacyvault.dto.AssetResponse;
 import com.legacyvault.dto.CreateAssetRequest;
+import com.legacyvault.dto.UpdateAssetRequest;
 import com.legacyvault.entity.Asset;
 import com.legacyvault.repository.AssetRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -100,6 +101,75 @@ public class AssetServiceTest {
 
         Exception exception = assertThrows(RuntimeException.class, () ->
                 assetService.getAssetDetail("wrong-owner-id", "asset-uuid-1")
+        );
+
+        assertTrue(exception.getMessage().contains("Asset not found or access denied"));
+    }
+
+    @Test
+    void testUpdateAsset_Success_WithNewCredentials() {
+        when(assetRepository.findByAssetIdAndOwnerId("asset-uuid-1", "owner-uuid"))
+                .thenReturn(Optional.of(testAsset));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateAssetRequest request = new UpdateAssetRequest(
+                "Crypto Wallet",
+                "Updated Wallet Name",
+                "Updated description",
+                "new_secret_key_999",
+                "https://storage.example.com/updated_doc.pdf"
+        );
+
+        AssetResponse response = assetService.updateAsset("owner-uuid", "asset-uuid-1", request);
+
+        assertNotNull(response);
+        assertEquals("asset-uuid-1", response.getAssetId());
+        assertEquals("Updated Wallet Name", response.getAssetName());
+        assertEquals("Crypto Wallet", response.getAssetType());
+        assertEquals("Updated description", response.getDescription());
+        assertEquals("new_secret_key_999", response.getDecryptedCredentials());
+        assertEquals("https://storage.example.com/updated_doc.pdf", response.getAttachmentUrl());
+        verify(assetRepository, times(1)).save(testAsset);
+    }
+
+    @Test
+    void testUpdateAsset_Success_KeepExistingCredentialsWhenNull() {
+        when(assetRepository.findByAssetIdAndOwnerId("asset-uuid-1", "owner-uuid"))
+                .thenReturn(Optional.of(testAsset));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        UpdateAssetRequest request = new UpdateAssetRequest(
+                "Bank Account",
+                "Renamed Account",
+                "New Description",
+                null, // No new credentials provided
+                "https://storage.example.com/doc.pdf"
+        );
+
+        AssetResponse response = assetService.updateAsset("owner-uuid", "asset-uuid-1", request);
+
+        assertNotNull(response);
+        assertEquals("Renamed Account", response.getAssetName());
+        // Should keep existing decrypted password
+        assertEquals("raw_password_123", response.getDecryptedCredentials());
+        verify(assetRepository, times(1)).save(testAsset);
+    }
+
+    @Test
+    void testUpdateAsset_NotFoundOrAccessDenied() {
+        when(assetRepository.findByAssetIdAndOwnerId("asset-uuid-1", "wrong-owner-id"))
+                .thenReturn(Optional.empty());
+
+        UpdateAssetRequest request = new UpdateAssetRequest(
+                "Bank Account",
+                "Renamed Account",
+                "New Description",
+                "pass",
+                null
+        );
+
+        Exception exception = assertThrows(RuntimeException.class, () ->
+                assetService.updateAsset("wrong-owner-id", "asset-uuid-1", request)
         );
 
         assertTrue(exception.getMessage().contains("Asset not found or access denied"));

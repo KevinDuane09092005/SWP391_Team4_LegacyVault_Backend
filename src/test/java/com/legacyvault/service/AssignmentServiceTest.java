@@ -2,6 +2,7 @@ package com.legacyvault.service;
 
 import com.legacyvault.dto.AssignmentResponse;
 import com.legacyvault.dto.CreateAssignmentRequest;
+import com.legacyvault.dto.UpdateAssignmentRequest;
 import com.legacyvault.entity.Asset;
 import com.legacyvault.entity.AssetAssignment;
 import com.legacyvault.entity.AssignmentBeneficiary;
@@ -139,5 +140,99 @@ public class AssignmentServiceTest {
         );
 
         assertTrue(exception.getMessage().contains("Asset already has an active assignment"));
+    }
+
+    @Test
+    void testUpdateAssignmentByAssetId_Success() {
+        AssetAssignment existingAssignment = new AssetAssignment("asset-1", "executor-old", "Old instructions");
+        existingAssignment.setAssignmentId("assignment-1");
+
+        UpdateAssignmentRequest updateRequest = new UpdateAssignmentRequest(
+                "asset-1",
+                "executor-1",
+                "Updated instructions: 100% to Tran Thi B",
+                List.of("beneficiary-1")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.findByAssetId("asset-1")).thenReturn(Optional.of(existingAssignment));
+        when(contactRepository.findByContactIdAndOwnerId("executor-1", "owner-1")).thenReturn(Optional.of(testExecutor));
+        when(contactRepository.existsByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(true);
+        when(assignmentRepository.save(any(AssetAssignment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(contactRepository.findById("beneficiary-1")).thenReturn(Optional.of(testBeneficiary1));
+
+        AssignmentResponse response = assignmentService.updateAssignmentByAssetId("owner-1", "asset-1", updateRequest);
+
+        assertNotNull(response);
+        assertEquals("assignment-1", response.getAssignmentId());
+        assertEquals("asset-1", response.getAssetId());
+        assertEquals("executor-1", response.getExecutorContactId());
+        assertEquals("Updated instructions: 100% to Tran Thi B", response.getHandoverInstructions());
+        assertEquals(1, response.getBeneficiaries().size());
+        assertEquals("beneficiary-1", response.getBeneficiaries().get(0).getContactId());
+
+        verify(beneficiaryRepository, times(1)).deleteByAssignmentId("assignment-1");
+        verify(beneficiaryRepository, times(1)).flush();
+        verify(beneficiaryRepository, times(1)).save(any(AssignmentBeneficiary.class));
+        verify(assignmentRepository, times(1)).save(existingAssignment);
+        verify(assetRepository, times(1)).save(testAsset);
+    }
+
+    @Test
+    void testUpdateAssignmentByAssetId_NotFound_ThrowsException() {
+        UpdateAssignmentRequest updateRequest = new UpdateAssignmentRequest(
+                "executor-1",
+                "Updated instructions",
+                List.of("beneficiary-1")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("non-existent", "owner-1")).thenReturn(Optional.empty());
+
+        Exception exception = assertThrows(IllegalArgumentException.class, () ->
+                assignmentService.updateAssignmentByAssetId("owner-1", "non-existent", updateRequest)
+        );
+
+        assertTrue(exception.getMessage().contains("Asset not found"));
+    }
+
+    @Test
+    void testUpdateAssignmentByAssetId_AssignmentNotFound_ThrowsException() {
+        UpdateAssignmentRequest updateRequest = new UpdateAssignmentRequest(
+                "executor-1",
+                "Updated instructions",
+                List.of("beneficiary-1")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.findByAssetId("asset-1")).thenReturn(Optional.empty());
+
+        Exception exception = assertThrows(RuntimeException.class, () ->
+                assignmentService.updateAssignmentByAssetId("owner-1", "asset-1", updateRequest)
+        );
+
+        assertTrue(exception.getMessage().contains("Assignment not found for this asset"));
+    }
+
+    @Test
+    void testUpdateAssignmentByAssetId_InvalidExecutor_ThrowsException() {
+        AssetAssignment existingAssignment = new AssetAssignment("asset-1", "executor-old", "Old instructions");
+        existingAssignment.setAssignmentId("assignment-1");
+
+        UpdateAssignmentRequest updateRequest = new UpdateAssignmentRequest(
+                "asset-1",
+                "executor-invalid",
+                "Updated instructions",
+                List.of("beneficiary-1")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.findByAssetId("asset-1")).thenReturn(Optional.of(existingAssignment));
+        when(contactRepository.findByContactIdAndOwnerId("executor-invalid", "owner-1")).thenReturn(Optional.empty());
+
+        Exception exception = assertThrows(IllegalArgumentException.class, () ->
+                assignmentService.updateAssignmentByAssetId("owner-1", "asset-1", updateRequest)
+        );
+
+        assertTrue(exception.getMessage().contains("Executor contact not found"));
     }
 }

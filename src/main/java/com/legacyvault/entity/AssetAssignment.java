@@ -20,6 +20,9 @@ public class AssetAssignment {
     @Column(name = "executor_contact_id", nullable = false, columnDefinition = "CHAR(36)")
     private String executorContactId;
 
+    @Column(name = "handover_protocol", length = 50)
+    private String handoverProtocol = "legal_verification";
+
     @Column(name = "handover_instructions", columnDefinition = "TEXT")
     private String handoverInstructions;
 
@@ -35,6 +38,7 @@ public class AssetAssignment {
         this.assetId = assetId;
         this.executorContactId = executorContactId;
         this.handoverInstructions = handoverInstructions;
+        this.handoverProtocol = "legal_verification";
     }
 
     public String getAssignmentId() {
@@ -59,6 +63,14 @@ public class AssetAssignment {
 
     public void setExecutorContactId(String executorContactId) {
         this.executorContactId = executorContactId;
+    }
+
+    public String getHandoverProtocol() {
+        return handoverProtocol;
+    }
+
+    public void setHandoverProtocol(String handoverProtocol) {
+        this.handoverProtocol = handoverProtocol;
     }
 
     public String getHandoverInstructions() {
@@ -89,6 +101,9 @@ public class AssetAssignment {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+        if (this.handoverProtocol == null) {
+            this.handoverProtocol = "legal_verification";
+        }
     }
 
     @PreUpdate

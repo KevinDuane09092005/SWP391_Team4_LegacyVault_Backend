@@ -3,6 +3,8 @@ package com.legacyvault.service;
 import com.legacyvault.dto.AssignmentResponse;
 import com.legacyvault.dto.BeneficiaryDto;
 import com.legacyvault.dto.CreateAssignmentRequest;
+import com.legacyvault.dto.UpdateAssignmentRequest;
+import java.time.LocalDateTime;
 import com.legacyvault.entity.Asset;
 import com.legacyvault.entity.AssetAssignment;
 import com.legacyvault.entity.AssignmentBeneficiary;
@@ -201,6 +203,86 @@ public class AssignmentService {
                 beneficiaryDtos,
                 assignment.getCreatedAt(),
                 assignment.getUpdatedAt()
+        );
+    }
+
+    @Transactional
+    public AssignmentResponse updateAssignmentByAssetId(String ownerId, String assetId, UpdateAssignmentRequest request) {
+        if (ownerId == null || ownerId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Owner ID is required");
+        }
+        if (assetId == null || assetId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Asset ID is required");
+        }
+        if (request == null) {
+            throw new IllegalArgumentException("Request body cannot be null");
+        }
+        if (request.getBeneficiaryContactIds() == null || request.getBeneficiaryContactIds().isEmpty()) {
+            throw new IllegalArgumentException("At least one beneficiary contact ID is required");
+        }
+
+        // 1. Validate Asset ownership
+        Asset asset = assetRepository.findByAssetIdAndOwnerId(assetId, ownerId)
+                .orElseThrow(() -> new IllegalArgumentException("Asset not found or access denied"));
+
+        // 2. Find existing assignment by assetId
+        AssetAssignment assignment = assignmentRepository.findByAssetId(assetId)
+                .orElseThrow(() -> new RuntimeException("Assignment not found for this asset"));
+
+        // 3. Validate Executor contact
+        Contact executor = contactRepository.findByContactIdAndOwnerId(request.getExecutorContactId(), ownerId)
+                .orElseThrow(() -> new IllegalArgumentException("Executor contact not found or access denied"));
+
+        // 4. Validate Beneficiary contacts
+        for (String beneficiaryId : request.getBeneficiaryContactIds()) {
+            if (!contactRepository.existsByContactIdAndOwnerId(beneficiaryId, ownerId)) {
+                throw new IllegalArgumentException("Beneficiary contact not found: " + beneficiaryId);
+            }
+        }
+
+        // 5. Update Assignment details
+        assignment.setExecutorContactId(request.getExecutorContactId());
+        assignment.setHandoverInstructions(request.getHandoverInstructions());
+        assignment.setUpdatedAt(LocalDateTime.now());
+        AssetAssignment savedAssignment = assignmentRepository.save(assignment);
+
+        // 6. Update Beneficiaries (remove old ones and add new ones)
+        beneficiaryRepository.deleteByAssignmentId(savedAssignment.getAssignmentId());
+        beneficiaryRepository.flush();
+
+        List<BeneficiaryDto> savedBeneficiaries = new ArrayList<>();
+        for (String beneficiaryId : request.getBeneficiaryContactIds()) {
+            AssignmentBeneficiary link = new AssignmentBeneficiary(
+                    savedAssignment.getAssignmentId(),
+                    beneficiaryId
+            );
+            beneficiaryRepository.save(link);
+
+            Contact c = contactRepository.findById(beneficiaryId).orElse(null);
+            savedBeneficiaries.add(new BeneficiaryDto(
+                    beneficiaryId,
+                    c != null ? c.getFullName() : "",
+                    c != null ? c.getEmail() : "",
+                    c != null ? c.getRelationship() : ""
+            ));
+        }
+
+        // 7. Ensure asset status is 'assigned'
+        asset.setStatus("assigned");
+        assetRepository.save(asset);
+
+        return new AssignmentResponse(
+                savedAssignment.getAssignmentId(),
+                asset.getAssetId(),
+                asset.getAssetName(),
+                asset.getAssetType(),
+                executor.getContactId(),
+                executor.getFullName(),
+                executor.getEmail(),
+                savedAssignment.getHandoverInstructions(),
+                savedBeneficiaries,
+                savedAssignment.getCreatedAt(),
+                savedAssignment.getUpdatedAt()
         );
     }
 }

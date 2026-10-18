@@ -2,11 +2,13 @@ package com.legacyvault.service;
 
 import com.legacyvault.dto.AssetResponse;
 import com.legacyvault.dto.CreateAssetRequest;
+import com.legacyvault.dto.UpdateAssetRequest;
 import com.legacyvault.entity.Asset;
 import com.legacyvault.repository.AssetRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -67,6 +69,57 @@ public class AssetService {
         }
 
         AssetResponse response = mapToResponse(asset, true);
+        response.setDecryptedCredentials(decryptedCredentials);
+        return response;
+    }
+
+    @Transactional
+    public AssetResponse updateAsset(String ownerId, String assetId, UpdateAssetRequest request) {
+        if (ownerId == null || ownerId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Owner ID is required");
+        }
+        if (assetId == null || assetId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Asset ID is required");
+        }
+        if (request == null) {
+            throw new IllegalArgumentException("Request body cannot be null");
+        }
+
+        Asset asset = assetRepository.findByAssetIdAndOwnerId(assetId, ownerId)
+                .orElseThrow(() -> new RuntimeException("Asset not found or access denied"));
+
+        if (request.getAssetName() != null && !request.getAssetName().trim().isEmpty()) {
+            asset.setAssetName(request.getAssetName().trim());
+        }
+
+        if (request.getAssetType() != null && !request.getAssetType().trim().isEmpty()) {
+            asset.setAssetType(request.getAssetType().trim());
+        }
+
+        asset.setDescription(request.getDescription());
+
+        // Update encryptedCredentials only if new credentials are provided
+        if (request.getCredentials() != null && !request.getCredentials().trim().isEmpty()) {
+            asset.setEncryptedCredentials(encryptionService.encrypt(request.getCredentials()));
+        }
+
+        if (request.getAttachmentUrl() != null) {
+            asset.setAttachmentUrl(request.getAttachmentUrl());
+        }
+
+        if (request.getStatus() != null && !request.getStatus().trim().isEmpty()) {
+            asset.setStatus(request.getStatus().trim());
+        }
+
+        asset.setUpdatedAt(LocalDateTime.now());
+        Asset savedAsset = assetRepository.save(asset);
+
+        String decryptedCredentials = null;
+        if (savedAsset.getEncryptedCredentials() != null) {
+            decryptedCredentials = encryptionService.decrypt(savedAsset.getEncryptedCredentials());
+        }
+
+        AssetResponse response = mapToResponse(savedAsset, true);
         response.setDecryptedCredentials(decryptedCredentials);
         return response;
     }

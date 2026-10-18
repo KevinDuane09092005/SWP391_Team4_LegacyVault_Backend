@@ -20,6 +20,10 @@ public interface ContactRepository extends JpaRepository<Contact, String> {
 
     boolean existsByContactIdAndOwnerId(String contactId, String ownerId);
 
+    List<Contact> findByEmail(String email);
+
+    Optional<Contact> findFirstByEmail(String email);
+
     @Query("SELECT c FROM Contact c WHERE c.ownerId = :ownerId AND " +
            "(:keyword IS NULL OR :keyword = '' OR " +
            "LOWER(c.fullName) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
