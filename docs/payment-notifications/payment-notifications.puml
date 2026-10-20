@@ -1,0 +1,89 @@
+@startuml
+title LegacyVault Demo Billing and In-App Notifications
+autonumber
+
+actor Visitor
+actor "Vault Owner" as Owner
+participant "Pricing / Billing UI" as UI
+participant "Plans / Billing API" as API
+participant "BillingService" as Service
+database "MySQL" as DB
+participant "MockPaymentGateway" as Gateway
+participant "NotificationService" as Notifications
+
+Visitor -> UI: Open pricing page
+UI -> API: GET /api/v1/plans
+API -> Service: Read fixed plan catalog
+Service --> API: Free, Essentials, Plus
+API --> UI: Prices and limits
+
+Owner -> UI: Add a payment method using demo token
+UI -> API: POST /api/v1/billing/payment-methods
+note right of UI
+Only a provider token and masked card metadata
+are sent. Never send PAN or CVV to this API.
+end note
+API -> Service: Validate Vault Owner and expiry
+Service -> DB: Store token + masked card metadata
+DB --> Service: Saved payment method
+Service --> UI: Masked payment method response
+
+Owner -> UI: Choose plan, billing cycle, and accept recurring terms
+UI -> API: POST /api/v1/billing/checkout
+API -> Service: Resolve price from server catalog
+Service -> DB: Load owner's saved method
+DB --> Service: Provider token + masked details
+Service -> Gateway: Charge demo token and server amount
+alt Demo payment approved
+  Gateway --> Service: Approved + mock reference
+  Service -> DB: Save successful transaction
+  Service -> DB: Activate account plan for one month/year, auto-renew on
+  Service -> Notifications: Create payment-success notice
+  Notifications -> DB: Save notice for owner
+  Service --> API: SUCCEEDED + transaction + subscription
+else Demo token ends with _declined
+  Gateway --> Service: Declined
+  Service -> DB: Save failed transaction
+  Service -> Notifications: Create payment-failure notice
+  Notifications -> DB: Save notice for owner
+  Service --> API: FAILED + transaction + unchanged subscription
+end
+API --> UI: Display success or failure result
+
+== Period end ==
+BillingRenewalScheduler -> Service: Scan subscriptions due for renewal
+Service -> DB: Load due ACTIVE subscriptions
+DB --> Service: Due subscriptions + default payment methods
+Service -> Gateway: Charge mock token for server-calculated renewal amount
+alt Renewal approved
+  Gateway --> Service: Approved + mock reference
+  Service -> DB: Record transaction and extend period
+  Service -> Notifications: Create renewal-success notice
+else Renewal declined or method unavailable
+  Gateway --> Service: Declined
+  Service -> DB: Record failed transaction and set PAST_DUE (7 days)
+  Service -> Notifications: Create renewal-failure notice
+  Owner -> UI: Replace default method and retry within grace period
+  UI -> API: POST /api/v1/billing/subscription/retry-payment
+  API -> Service: Retry with current default method
+end
+Owner -> UI: Cancel subscription
+UI -> API: POST /api/v1/billing/subscription/cancel
+API -> Service: Turn off auto-renew; keep paid period active until period end
+
+Owner -> UI: Open notification inbox
+UI -> API: GET /api/v1/notifications
+API -> Notifications: List notices for authenticated user only
+Notifications -> DB: Query user's notices
+DB --> Notifications: Notice list + unread count
+Notifications --> API: Paginated response
+API --> UI: Display inbox
+Owner -> UI: Mark all notifications as read
+UI -> API: POST /api/v1/notifications/mark-all-read
+API -> Notifications: Update only current user's records
+Notifications -> DB: Persist read timestamp
+
+note over Gateway,DB
+This is a demo adapter only. No real payment is made.
+end note
+@enduml

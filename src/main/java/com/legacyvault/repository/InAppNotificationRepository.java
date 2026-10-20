@@ -10,11 +10,14 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface InAppNotificationRepository extends JpaRepository<InAppNotification, String> {
 
     Page<InAppNotification> findByUserIdOrderByCreatedAtDesc(String userId, Pageable pageable);
+
+    Optional<InAppNotification> findByNotificationIdAndUserId(String notificationId, String userId);
 
     long countByUserIdAndIsReadFalse(String userId);
 
