@@ -14,11 +14,11 @@ public class DeadMansSwitch {
     @Column(name = "owner_id", nullable = false, unique = true, length = 36)
     private String ownerId;
 
-    @Column(name = "check_in_interval_days", nullable = false)
-    private int checkInIntervalDays = 30;
+    @Column(name = "check_in_interval_seconds", nullable = false)
+    private int checkInIntervalSeconds = 30;
 
-    @Column(name = "grace_period_days", nullable = false)
-    private int gracePeriodDays = 7;
+    @Column(name = "grace_period_seconds", nullable = false)
+    private int gracePeriodSeconds = 50;
 
     @Column(name = "status", length = 50)
     private String status = "active";
@@ -38,13 +38,13 @@ public class DeadMansSwitch {
     public DeadMansSwitch() {
     }
 
-    public DeadMansSwitch(String ownerId, int checkInIntervalDays, int gracePeriodDays) {
+    public DeadMansSwitch(String ownerId, int checkInIntervalSeconds, int gracePeriodSeconds) {
         this.ownerId = ownerId;
-        this.checkInIntervalDays = checkInIntervalDays;
-        this.gracePeriodDays = gracePeriodDays;
+        this.checkInIntervalSeconds = checkInIntervalSeconds;
+        this.gracePeriodSeconds = gracePeriodSeconds;
         this.status = "active";
         this.lastCheckInAt = LocalDateTime.now();
-        this.nextCheckInAt = this.lastCheckInAt.plusDays(checkInIntervalDays);
+        this.nextCheckInAt = this.lastCheckInAt.plusSeconds(checkInIntervalSeconds);
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
@@ -64,7 +64,7 @@ public class DeadMansSwitch {
             this.lastCheckInAt = LocalDateTime.now();
         }
         if (this.nextCheckInAt == null) {
-            this.nextCheckInAt = this.lastCheckInAt.plusDays(this.checkInIntervalDays);
+            this.nextCheckInAt = this.lastCheckInAt.plusSeconds(this.checkInIntervalSeconds);
         }
     }
 
@@ -89,20 +89,37 @@ public class DeadMansSwitch {
         this.ownerId = ownerId;
     }
 
+    public int getCheckInIntervalSeconds() {
+        return checkInIntervalSeconds;
+    }
+
+    public void setCheckInIntervalSeconds(int checkInIntervalSeconds) {
+        this.checkInIntervalSeconds = checkInIntervalSeconds;
+    }
+
+    public int getGracePeriodSeconds() {
+        return gracePeriodSeconds;
+    }
+
+    public void setGracePeriodSeconds(int gracePeriodSeconds) {
+        this.gracePeriodSeconds = gracePeriodSeconds;
+    }
+
+    // Tương thích ngược với các hàm gọi dạng Days
     public int getCheckInIntervalDays() {
-        return checkInIntervalDays;
+        return checkInIntervalSeconds;
     }
 
     public void setCheckInIntervalDays(int checkInIntervalDays) {
-        this.checkInIntervalDays = checkInIntervalDays;
+        this.checkInIntervalSeconds = checkInIntervalDays;
     }
 
     public int getGracePeriodDays() {
-        return gracePeriodDays;
+        return gracePeriodSeconds;
     }
 
     public void setGracePeriodDays(int gracePeriodDays) {
-        this.gracePeriodDays = gracePeriodDays;
+        this.gracePeriodSeconds = gracePeriodDays;
     }
 
     public String getStatus() {

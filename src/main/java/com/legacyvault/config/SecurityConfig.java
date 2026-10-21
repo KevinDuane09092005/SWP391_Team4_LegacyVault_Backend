@@ -34,7 +34,8 @@ public class SecurityConfig {
                                 "/api/v1/auth/**",
                                 "/api/v1/handover/beneficiary/portal-context",
                                 "/api/v1/handover/beneficiary/login-with-code",
-                                "/api/v1/handover/beneficiary/verify-otp"
+                                "/api/v1/handover/beneficiary/verify-otp",
+                                "/api/v1/handover/trigger"
                         ).permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
