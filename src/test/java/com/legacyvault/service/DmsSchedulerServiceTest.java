@@ -66,9 +66,9 @@ public class DmsSchedulerServiceTest {
     @Test
     void testEvaluate_GracePeriodExceeded_TriggersHandover() {
         LocalDateTime now = LocalDateTime.now();
-        // nextDue was 10 days ago, grace period is 7 days => graceDeadline was 3 days ago
-        testDms.setNextCheckInAt(now.minusDays(10));
-        testDms.setGracePeriodDays(7);
+        // nextDue was 10 seconds ago, grace period is 7 seconds => graceDeadline was 3 seconds ago
+        testDms.setNextCheckInAt(now.minusSeconds(10));
+        testDms.setGracePeriodSeconds(7);
         testDms.setStatus("grace_period");
 
         schedulerService.evaluateSingleDms(testDms, now);
@@ -81,9 +81,9 @@ public class DmsSchedulerServiceTest {
     @Test
     void testEvaluate_CheckInMissed_EntersGracePeriod() {
         LocalDateTime now = LocalDateTime.now();
-        // nextDue was 2 days ago, grace period is 7 days => still in grace period
-        testDms.setNextCheckInAt(now.minusDays(2));
-        testDms.setGracePeriodDays(7);
+        // nextDue was 2 seconds ago, grace period is 7 seconds => still in grace period
+        testDms.setNextCheckInAt(now.minusSeconds(2));
+        testDms.setGracePeriodSeconds(7);
         testDms.setStatus("active");
 
         when(userRepository.findById("owner-1")).thenReturn(Optional.of(testOwner));
@@ -100,8 +100,9 @@ public class DmsSchedulerServiceTest {
     @Test
     void testEvaluate_CheckInDueSoon_TransitionsToDueSoonAndWarns() {
         LocalDateTime now = LocalDateTime.now();
-        // nextDue is in 2 days => within 3 days threshold
-        testDms.setNextCheckInAt(now.plusDays(2));
+        // interval is 30 seconds => threshold is 10s. nextDue is in 5 seconds => within threshold
+        testDms.setCheckInIntervalSeconds(30);
+        testDms.setNextCheckInAt(now.plusSeconds(5));
         testDms.setStatus("active");
 
         when(userRepository.findById("owner-1")).thenReturn(Optional.of(testOwner));
@@ -116,8 +117,9 @@ public class DmsSchedulerServiceTest {
     @Test
     void testEvaluate_NormalActive_RemainsUnchanged() {
         LocalDateTime now = LocalDateTime.now();
-        // nextDue is in 20 days => safe
-        testDms.setNextCheckInAt(now.plusDays(20));
+        // nextDue is in 200 seconds => safe
+        testDms.setCheckInIntervalSeconds(30);
+        testDms.setNextCheckInAt(now.plusSeconds(200));
         testDms.setStatus("active");
 
         schedulerService.evaluateSingleDms(testDms, now);

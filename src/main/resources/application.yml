@@ -24,6 +24,8 @@ spring:
           auth: true
           starttls:
             enable: true
+  quartz:
+    job-store-type: memory
 
 jwt:
   secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
@@ -31,3 +33,7 @@ jwt:
 
 encryption:
   secret-key: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+dms:
+  scheduler:
+    cron: "0 * * ? * *" # Cú pháp Quartz Cron: chạy tự động mỗi 1 phút 1 lần (tại giây thứ 0 của mỗi phút)

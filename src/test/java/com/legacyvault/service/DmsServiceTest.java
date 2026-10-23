@@ -48,8 +48,8 @@ public class DmsServiceTest {
     void setUp() {
         testDms = new DeadMansSwitch("owner-1", 90, 14);
         testDms.setDmsId("dms-uuid-1");
-        testDms.setLastCheckInAt(LocalDateTime.now().minusDays(10));
-        testDms.setNextCheckInAt(LocalDateTime.now().plusDays(80));
+        testDms.setLastCheckInAt(LocalDateTime.now().minusSeconds(10));
+        testDms.setNextCheckInAt(LocalDateTime.now().plusSeconds(80));
 
         testExecutor = new Contact("owner-1", "Linh Pham", "Attorney", "linh.pham@legacymail.com", "0901234567", false, true, "verified");
         testExecutor.setContactId("executor-uuid-1");
@@ -70,7 +70,7 @@ public class DmsServiceTest {
         assertEquals(14, response.getGracePeriodDays());
         assertEquals("Linh Pham", response.getExecutorName());
         assertEquals("linh.pham@legacymail.com", response.getExecutorEmail());
-        assertTrue(response.getDaysRemaining() > 0);
+        assertTrue(response.getSecondsRemaining() > 0);
     }
 
     @Test
@@ -98,7 +98,7 @@ public class DmsServiceTest {
                 dmsService.saveOrUpdateConfig("owner-1", request)
         );
 
-        assertTrue(exception.getMessage().contains("Check-in interval must be at least 1 day"));
+        assertTrue(exception.getMessage().contains("Check-in interval must be at least 1"));
     }
 
     @Test

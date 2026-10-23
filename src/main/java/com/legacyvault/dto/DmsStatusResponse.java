@@ -7,6 +7,8 @@ public class DmsStatusResponse {
     private String dmsId;
     private String ownerId;
     private String status;
+    private int checkInIntervalSeconds;
+    private int gracePeriodSeconds;
     private int checkInIntervalDays;
     private int gracePeriodDays;
     private LocalDateTime lastCheckInAt;
@@ -45,20 +47,40 @@ public class DmsStatusResponse {
         this.status = status;
     }
 
+    public int getCheckInIntervalSeconds() {
+        return checkInIntervalSeconds > 0 ? checkInIntervalSeconds : checkInIntervalDays;
+    }
+
+    public void setCheckInIntervalSeconds(int checkInIntervalSeconds) {
+        this.checkInIntervalSeconds = checkInIntervalSeconds;
+        this.checkInIntervalDays = checkInIntervalSeconds;
+    }
+
+    public int getGracePeriodSeconds() {
+        return gracePeriodSeconds > 0 ? gracePeriodSeconds : gracePeriodDays;
+    }
+
+    public void setGracePeriodSeconds(int gracePeriodSeconds) {
+        this.gracePeriodSeconds = gracePeriodSeconds;
+        this.gracePeriodDays = gracePeriodSeconds;
+    }
+
     public int getCheckInIntervalDays() {
-        return checkInIntervalDays;
+        return checkInIntervalSeconds > 0 ? checkInIntervalSeconds : checkInIntervalDays;
     }
 
     public void setCheckInIntervalDays(int checkInIntervalDays) {
         this.checkInIntervalDays = checkInIntervalDays;
+        this.checkInIntervalSeconds = checkInIntervalDays;
     }
 
     public int getGracePeriodDays() {
-        return gracePeriodDays;
+        return gracePeriodSeconds > 0 ? gracePeriodSeconds : gracePeriodDays;
     }
 
     public void setGracePeriodDays(int gracePeriodDays) {
         this.gracePeriodDays = gracePeriodDays;
+        this.gracePeriodSeconds = gracePeriodDays;
     }
 
     public LocalDateTime getLastCheckInAt() {

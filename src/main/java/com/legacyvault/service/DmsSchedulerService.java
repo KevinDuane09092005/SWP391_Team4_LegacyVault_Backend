@@ -62,7 +62,7 @@ public class DmsSchedulerService {
             return;
         }
 
-        LocalDateTime graceDeadline = nextDue.plusDays(dms.getGracePeriodDays());
+        LocalDateTime graceDeadline = nextDue.plusSeconds(dms.getGracePeriodSeconds());
         String currentStatus = dms.getStatus();
 
         // 1. Quá hạn Grace Period -> Kích hoạt bàn giao (Triggered)
@@ -81,34 +81,35 @@ public class DmsSchedulerService {
                 dms.setStatus("grace_period");
                 dmsRepository.save(dms);
 
-                long graceDaysLeft = Math.max(1, Duration.between(now, graceDeadline).toDays());
+                long graceSecondsLeft = Math.max(1, Duration.between(now, graceDeadline).getSeconds());
                 User owner = userRepository.findById(dms.getOwnerId()).orElse(null);
                 String ownerName = owner != null ? owner.getFullName() : "Vault Owner";
                 String ownerEmail = owner != null ? owner.getEmail() : null;
 
                 if (ownerEmail != null) {
-                    emailService.sendDmsGracePeriodEmail(ownerEmail, ownerName, ownerName, (int) graceDaysLeft, true);
+                    emailService.sendDmsGracePeriodEmail(ownerEmail, ownerName, ownerName, (int) graceSecondsLeft, true);
                 }
 
                 List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(dms.getOwnerId());
                 for (Contact executor : executors) {
-                    emailService.sendDmsGracePeriodEmail(executor.getEmail(), executor.getFullName(), ownerName, (int) graceDaysLeft, false);
+                    emailService.sendDmsGracePeriodEmail(executor.getEmail(), executor.getFullName(), ownerName, (int) graceSecondsLeft, false);
                 }
             }
             return;
         }
 
-        // 3. Sắp đến hạn Check-in (trong vòng 3 ngày) -> Chuyển sang DUE_SOON
-        if (now.isAfter(nextDue.minusDays(3))) {
+        // 3. Sắp đến hạn Check-in (trong vòng ngưỡng cảnh báo) -> Chuyển sang DUE_SOON
+        long reminderThresholdSeconds = Math.min(10, Math.max(1, dms.getCheckInIntervalSeconds() / 3));
+        if (now.isAfter(nextDue.minusSeconds(reminderThresholdSeconds))) {
             if ("active".equalsIgnoreCase(currentStatus)) {
                 logger.info("DMS {} of owner {} due soon. Sending reminder.", dms.getDmsId(), dms.getOwnerId());
                 dms.setStatus("due_soon");
                 dmsRepository.save(dms);
 
-                long daysLeft = Math.max(1, Duration.between(now, nextDue).toDays());
+                long secondsLeft = Math.max(1, Duration.between(now, nextDue).getSeconds());
                 User owner = userRepository.findById(dms.getOwnerId()).orElse(null);
                 if (owner != null && owner.getEmail() != null) {
-                    emailService.sendDmsWarningEmail(owner.getEmail(), owner.getFullName(), (int) daysLeft);
+                    emailService.sendDmsWarningEmail(owner.getEmail(), owner.getFullName(), (int) secondsLeft);
                 }
             }
         }

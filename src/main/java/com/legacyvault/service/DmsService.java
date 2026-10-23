@@ -37,7 +37,7 @@ public class DmsService {
     public DmsStatusResponse getDmsStatus(String ownerId) {
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
                 .orElseGet(() -> {
-                    DeadMansSwitch defaultDms = new DeadMansSwitch(ownerId, 30, 7);
+                    DeadMansSwitch defaultDms = new DeadMansSwitch(ownerId, 30, 50);
                     return dmsRepository.save(defaultDms);
                 });
 
@@ -46,22 +46,25 @@ public class DmsService {
 
     @Transactional
     public DmsStatusResponse saveOrUpdateConfig(String ownerId, DmsConfigRequest request) {
-        if (request.getCheckInIntervalDays() == null || request.getCheckInIntervalDays() < 1) {
-            throw new IllegalArgumentException("Check-in interval must be at least 1 day");
+        Integer interval = request.getCheckInIntervalSeconds();
+        Integer grace = request.getGracePeriodSeconds();
+
+        if (interval == null || interval < 1) {
+            throw new IllegalArgumentException("Check-in interval must be at least 1 second");
         }
-        if (request.getGracePeriodDays() == null || request.getGracePeriodDays() < 1) {
-            throw new IllegalArgumentException("Grace period must be at least 1 day");
+        if (grace == null || grace < 1) {
+            throw new IllegalArgumentException("Grace period must be at least 1 second");
         }
 
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
-                .orElseGet(() -> new DeadMansSwitch(ownerId, request.getCheckInIntervalDays(), request.getGracePeriodDays()));
+                .orElseGet(() -> new DeadMansSwitch(ownerId, interval, grace));
 
-        dms.setCheckInIntervalDays(request.getCheckInIntervalDays());
-        dms.setGracePeriodDays(request.getGracePeriodDays());
+        dms.setCheckInIntervalSeconds(interval);
+        dms.setGracePeriodSeconds(grace);
 
         LocalDateTime lastCheckIn = dms.getLastCheckInAt() != null ? dms.getLastCheckInAt() : LocalDateTime.now();
         dms.setLastCheckInAt(lastCheckIn);
-        dms.setNextCheckInAt(lastCheckIn.plusDays(request.getCheckInIntervalDays()));
+        dms.setNextCheckInAt(lastCheckIn.plusSeconds(interval));
 
         if (!"triggered".equalsIgnoreCase(dms.getStatus())) {
             dms.setStatus("active");
@@ -74,11 +77,11 @@ public class DmsService {
     @Transactional
     public CheckInResponse checkIn(String ownerId, String checkInType) {
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
-                .orElseGet(() -> new DeadMansSwitch(ownerId, 30, 7));
+                .orElseGet(() -> new DeadMansSwitch(ownerId, 30, 50));
 
         LocalDateTime now = LocalDateTime.now();
         dms.setLastCheckInAt(now);
-        dms.setNextCheckInAt(now.plusDays(dms.getCheckInIntervalDays()));
+        dms.setNextCheckInAt(now.plusSeconds(dms.getCheckInIntervalSeconds()));
         dms.setStatus("active");
         DeadMansSwitch saved = dmsRepository.save(dms);
 
@@ -112,14 +115,16 @@ public class DmsService {
         DmsStatusResponse response = new DmsStatusResponse();
         response.setDmsId(dms.getDmsId());
         response.setOwnerId(dms.getOwnerId());
-        response.setCheckInIntervalDays(dms.getCheckInIntervalDays());
-        response.setGracePeriodDays(dms.getGracePeriodDays());
+        response.setCheckInIntervalSeconds(dms.getCheckInIntervalSeconds());
+        response.setGracePeriodSeconds(dms.getGracePeriodSeconds());
+        response.setCheckInIntervalDays(dms.getCheckInIntervalSeconds());
+        response.setGracePeriodDays(dms.getGracePeriodSeconds());
         response.setLastCheckInAt(dms.getLastCheckInAt());
         response.setNextCheckInAt(dms.getNextCheckInAt());
 
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime nextDue = dms.getNextCheckInAt();
-        LocalDateTime graceDeadline = nextDue != null ? nextDue.plusDays(dms.getGracePeriodDays()) : now;
+        LocalDateTime graceDeadline = nextDue != null ? nextDue.plusSeconds(dms.getGracePeriodSeconds()) : now;
 
         String currentStatus = dms.getStatus();
         if (!"triggered".equalsIgnoreCase(currentStatus)) {
@@ -127,7 +132,7 @@ public class DmsService {
                 currentStatus = "grace_period";
             } else if (nextDue != null && now.isAfter(nextDue)) {
                 currentStatus = "grace_period";
-            } else if (nextDue != null && now.isAfter(nextDue.minusDays(3))) {
+            } else if (nextDue != null && now.isAfter(nextDue.minusSeconds(Math.min(10, Math.max(1, dms.getCheckInIntervalSeconds() / 3))))) {
                 currentStatus = "due_soon";
             } else {
                 currentStatus = "active";
