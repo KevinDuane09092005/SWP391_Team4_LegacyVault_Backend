@@ -161,5 +161,35 @@ public class EmailServiceImpl implements EmailService {
                     toEmail, e.getMessage(), accessCode);
         }
     }
+
+    @Override
+    public void sendVerificationApprovedToExecutor(String executorEmail, String executorName,
+                                                   String caseNumber, String beneficiaryEmail,
+                                                   String beneficiaryName) {
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setFrom(fromEmail);
+            message.setTo(executorEmail);
+            message.setSubject("[LegacyVault] Hồ sơ bàn giao đã được phê duyệt pháp lý - Mã hồ sơ: " + caseNumber);
+            message.setText(
+                    "Kính gửi Người thi hành " + (executorName != null ? executorName : "") + ",\n\n"
+                    + "Hồ sơ bàn giao di sản số với Mã hồ sơ: " + caseNumber
+                    + " đã được Bộ phận Xác minh Pháp lý phê duyệt thành công.\n\n"
+                    + "Thông tin người hưởng thụ:\n"
+                    + "  - Email: " + (beneficiaryEmail != null ? beneficiaryEmail : "Chưa cập nhật") + "\n"
+                    + (beneficiaryName != null ? "  - Họ tên: " + beneficiaryName + "\n" : "")
+                    + "\nVui lòng đăng nhập vào cổng Người thi hành để tiến hành các bước bàn giao tài sản.\n\n"
+                    + "Lưu ý: Email này chỉ được gửi đến Người thi hành. "
+                    + "Người hưởng thụ sẽ nhận thông báo riêng ở bước tiếp theo.\n\n"
+                    + "Trân trọng,\n"
+                    + "Hệ thống ủy quyền LegacyVault"
+            );
+
+            mailSender.send(message);
+            logger.info("Đã gửi email thông báo phê duyệt hồ sơ {} tới Executor: {}", caseNumber, executorEmail);
+        } catch (Exception e) {
+            logger.warn("Không thể gửi email phê duyệt hồ sơ {} tới Executor {}: {}", caseNumber, executorEmail, e.getMessage());
+        }
+    }
 }
 

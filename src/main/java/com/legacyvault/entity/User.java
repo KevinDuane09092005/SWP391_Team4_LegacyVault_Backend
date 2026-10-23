@@ -19,7 +19,7 @@ public class User {
     @Column(name = "email", nullable = false, unique = true, length = 150)
     private String email;
 
-    @Column(name = "phone_number", length = 20)
+    @Transient
     private String phoneNumber;
 
     @Column(name = "password_hash", nullable = false)
