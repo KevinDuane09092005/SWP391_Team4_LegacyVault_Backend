@@ -28,6 +28,7 @@ public class HandoverExecutionService {
     private final AssignmentBeneficiaryRepository assignmentBeneficiaryRepository;
     private final BeneficiaryClaimSessionRepository claimSessionRepository;
     private final EmailService emailService;
+    private final EncryptionService encryptionService;
 
     public HandoverExecutionService(HandoverCaseRepository handoverCaseRepository,
                                   UserRepository userRepository,
@@ -36,7 +37,8 @@ public class HandoverExecutionService {
                                   AssetAssignmentRepository assetAssignmentRepository,
                                   AssignmentBeneficiaryRepository assignmentBeneficiaryRepository,
                                   BeneficiaryClaimSessionRepository claimSessionRepository,
-                                  EmailService emailService) {
+                                  EmailService emailService,
+                                  EncryptionService encryptionService) {
         this.handoverCaseRepository = handoverCaseRepository;
         this.userRepository = userRepository;
         this.contactRepository = contactRepository;
@@ -45,6 +47,7 @@ public class HandoverExecutionService {
         this.assignmentBeneficiaryRepository = assignmentBeneficiaryRepository;
         this.claimSessionRepository = claimSessionRepository;
         this.emailService = emailService;
+        this.encryptionService = encryptionService;
     }
 
     public static String sha256Hex(String input) {
@@ -159,18 +162,32 @@ public class HandoverExecutionService {
 
         // Assets
         List<Asset> assets = assetRepository.findByOwnerId(c.getOwnerId());
+        if (assets.isEmpty()) {
+            assets = assetRepository.findAll();
+        }
         List<HandoverDetailsResponse.HandoverAssetItem> assetItems = new ArrayList<>();
         if (assets.isEmpty()) {
-            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("Primary Vault Ledger Key", "Credentials", "Legal Verification", "AUTHORIZED & LOCKED"));
-            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("Family Inheritance Instructions.pdf", "Documents", "Automatic Release", "AUTHORIZED & LOCKED"));
-            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("Real Estate Deeds & Trust Assets", "Property Deeds", "Court Decrees", "LOCKED / RESTRICTED"));
+            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("asset-default-1", "Primary Vault Ledger Key", "Credentials", "Secure digital key", null, null, "Legal Verification", "AUTHORIZED & LOCKED"));
+            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("asset-default-2", "Family Inheritance Instructions.pdf", "Documents", "Legal estate documents", null, null, "Automatic Release", "AUTHORIZED & LOCKED"));
         } else {
             for (Asset a : assets) {
+                String decrypted = null;
+                if (a.getEncryptedCredentials() != null && !a.getEncryptedCredentials().isEmpty()) {
+                    try {
+                        decrypted = encryptionService.decrypt(a.getEncryptedCredentials());
+                    } catch (Exception e) {
+                        logger.warn("Could not decrypt asset credentials {}: {}", a.getAssetId(), e.getMessage());
+                    }
+                }
                 assetItems.add(new HandoverDetailsResponse.HandoverAssetItem(
+                        a.getAssetId(),
                         a.getAssetName(),
                         a.getAssetType() != null ? a.getAssetType() : "General Asset",
+                        a.getDescription(),
+                        decrypted,
+                        a.getAttachmentUrl(),
                         "Legal Verification",
-                        "AUTHORIZED & LOCKED"
+                        "RELEASED".equalsIgnoreCase(c.getStatus()) ? "AUTHORIZED" : "AUTHORIZED & LOCKED"
                 ));
             }
         }
