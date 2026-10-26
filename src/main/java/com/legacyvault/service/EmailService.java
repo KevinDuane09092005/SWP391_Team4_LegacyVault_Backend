@@ -10,9 +10,16 @@ public interface EmailService {
 
     /**
      * Gửi thông báo đến Executor sau khi hồ sơ được phê duyệt pháp lý.
-     * Nội dung bao gồm: mã hồ sơ bàn giao và email của người hưởng thụ.
-     * Người hưởng thụ KHÔNG nhận mail này.
+     * Nội dung bao gồm: mã hồ sơ bàn giao và thông tin người thụ hưởng.
+     * Người thụ hưởng KHÔNG nhận mail này ở bước này.
      */
     void sendVerificationApprovedToExecutor(String executorEmail, String executorName,
                                             String caseNumber, String beneficiaryEmail, String beneficiaryName);
+
+    /**
+     * Gửi thông báo đến Executor sau khi hồ sơ bị từ chối thẩm định pháp lý.
+     * Nội dung bao gồm: mã hồ sơ, lý do từ chối (reason) và mã lý do (reasonCode).
+     */
+    void sendVerificationRejectedToExecutor(String executorEmail, String executorName,
+                                            String caseNumber, String reason, String reasonCode);
 }

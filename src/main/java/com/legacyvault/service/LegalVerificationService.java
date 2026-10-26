@@ -183,29 +183,28 @@ public class LegalVerificationService {
 
         logger.info("Case {} APPROVED by verifierId={}", c.getCaseNumber(), verifierId);
 
-        // Gửi mail thông báo đến Executor — Beneficiary KHÔNG nhận mail mã hồ sơ ở bước
-        // này
+        // Gửi mail thông báo đến Executor — Người thụ hưởng KHÔNG nhận mail ở bước này
         List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(c.getOwnerId());
         if (!executors.isEmpty()) {
             Contact executor = executors.get(0);
 
-            String beneficiaryEmail = null;
-            String beneficiaryName = null;
-            List<Contact> contacts = contactRepository.findByOwnerId(c.getOwnerId());
-            for (Contact contact : contacts) {
-                if (Boolean.TRUE.equals(contact.getIsBeneficiary())) {
-                    beneficiaryEmail = contact.getEmail();
-                    beneficiaryName = contact.getFullName();
-                    break;
-                }
-            }
+            List<Contact> beneficiaryContacts = contactRepository.findByOwnerId(c.getOwnerId()).stream()
+                    .filter(contact -> Boolean.TRUE.equals(contact.getIsBeneficiary()))
+                    .collect(Collectors.toList());
+
+            String beneficiaryEmails = beneficiaryContacts.stream()
+                    .map(Contact::getEmail)
+                    .collect(Collectors.joining(", "));
+            String beneficiaryNames = beneficiaryContacts.stream()
+                    .map(Contact::getFullName)
+                    .collect(Collectors.joining(", "));
 
             emailService.sendVerificationApprovedToExecutor(
                     executor.getEmail(),
                     executor.getFullName(),
                     c.getCaseNumber(),
-                    beneficiaryEmail,
-                    beneficiaryName);
+                    beneficiaryEmails.isEmpty() ? null : beneficiaryEmails,
+                    beneficiaryNames.isEmpty() ? null : beneficiaryNames);
         } else {
             logger.warn("Case {} APPROVED nhưng không tìm thấy Executor để gửi mail thông báo.", c.getCaseNumber());
         }
@@ -245,6 +244,21 @@ public class LegalVerificationService {
         verificationReviewRepository.save(review);
 
         logger.warn("Case {} REJECTED by verifierId={}, reason={}", c.getCaseNumber(), verifierId, reason);
+
+        // Gửi email thông báo từ chối đến Executor
+        List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(c.getOwnerId());
+        if (!executors.isEmpty()) {
+            Contact executor = executors.get(0);
+            emailService.sendVerificationRejectedToExecutor(
+                    executor.getEmail(),
+                    executor.getFullName(),
+                    c.getCaseNumber(),
+                    reason,
+                    reasonCode);
+        } else {
+            logger.warn("Case {} REJECTED nhưng không tìm thấy Executor để gửi mail thông báo.", c.getCaseNumber());
+        }
+
         return getCaseDetail(c.getCaseId());
     }
 
