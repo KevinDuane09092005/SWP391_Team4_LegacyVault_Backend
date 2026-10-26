@@ -17,12 +17,6 @@ Required if you want real OTP/notification email delivery (otherwise email is no
 - `SPRING_MAIL_USERNAME`
 - `SPRING_MAIL_PASSWORD`
 
-Optional for AWS face verification:
-
-- `FACE_VERIFICATION_AWS_ENABLED=true`
-- `FACE_VERIFICATION_AWS_REGION=ap-southeast-7` or `ap-southeast-5`
-- `FACE_ENCRYPTION_KEY` (Base64-encoded random 32-byte AES key)
-
-If `JWT_SECRET` is not configured, token signing fails instead of using a known default. If `ENCRYPTION_SECRET_KEY` is not configured, asset encryption/decryption fails instead of using a repository-bundled key. AWS face verification is disabled by default.
+If `JWT_SECRET` is not configured, token signing fails instead of using a known default. If `ENCRYPTION_SECRET_KEY` is not configured, asset encryption/decryption fails instead of using a repository-bundled key.
 
 The mail credential previously present in tracked configuration must be rotated at the mail provider. Removing it from the current file does not erase it from existing Git history; treat it as compromised if that history was shared or pushed.
