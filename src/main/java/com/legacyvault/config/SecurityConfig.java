@@ -32,6 +32,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
+                                "/api/v1/demo/face/**",
                                 "/api/v1/auth/**",
                                 "/api/v1/handover/beneficiary/portal-context",
                                 "/api/v1/handover/beneficiary/login-with-code",
