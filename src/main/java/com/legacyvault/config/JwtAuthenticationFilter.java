@@ -1,6 +1,7 @@
 package com.legacyvault.config;
 
 import com.legacyvault.service.JwtService;
+import com.legacyvault.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,9 +21,11 @@ import java.util.List;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository) {
         this.jwtService = jwtService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -38,6 +41,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (jwtService.validateToken(token)) {
             String userId = jwtService.extractUserId(token);
             String role = jwtService.extractRole(token);
+            var account = userRepository.findById(userId);
+            if (account.isPresent()) {
+                if (Boolean.FALSE.equals(account.get().getIsActive())) {
+                    response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "User account is suspended");
+                    return;
+                }
+                role = account.get().getRole();
+            }
             List<SimpleGrantedAuthority> authorities = role != null 
                     ? List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase())) 
                     : Collections.emptyList();

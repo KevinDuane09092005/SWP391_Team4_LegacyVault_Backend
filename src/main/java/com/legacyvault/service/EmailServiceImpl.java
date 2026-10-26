@@ -38,8 +38,8 @@ public class EmailServiceImpl implements EmailService {
             mailSender.send(message);
             logger.info("Đã gửi email chứa OTP thành công tới: {}", toEmail);
         } catch (Exception e) {
-            logger.warn("Không thể gửi email tới {}: {}. (Mã OTP phục vụ dev/test: {})", 
-                    toEmail, e.getMessage(), otpCode);
+            logger.warn("Không thể gửi email OTP ({}); mã xác thực không được ghi log",
+                    e.getClass().getSimpleName());
         }
     }
 
@@ -157,8 +157,8 @@ public class EmailServiceImpl implements EmailService {
             mailSender.send(message);
             logger.info("Đã gửi email Access Code tới Beneficiary: {}", toEmail);
         } catch (Exception e) {
-            logger.warn("Không thể gửi email Access Code tới {}: {}. (Mã Access Code phục vụ dev/test: {})",
-                    toEmail, e.getMessage(), accessCode);
+            logger.warn("Không thể gửi email Access Code ({}); mã truy cập không được ghi log",
+                    e.getClass().getSimpleName());
         }
     }
 }

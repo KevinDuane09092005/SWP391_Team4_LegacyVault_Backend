@@ -2,9 +2,9 @@ spring:
   application:
     name: LegacyVault
   datasource:
-    url: jdbc:mysql://localhost:3306/legacy_vault_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-    username: root
-    password: root # Config local testing
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/legacy_vault_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -16,8 +16,8 @@ spring:
   mail:
     host: ${SPRING_MAIL_HOST:smtp.gmail.com}
     port: ${SPRING_MAIL_PORT:587}
-    username: ${SPRING_MAIL_USERNAME:lelamsinh1803@gmail.com}
-    password: ${SPRING_MAIL_PASSWORD:yqkyzrqbltsaypmr}
+    username: ${SPRING_MAIL_USERNAME:}
+    password: ${SPRING_MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -28,11 +28,18 @@ spring:
     job-store-type: memory
 
 jwt:
-  secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+  secret: ${JWT_SECRET:}
   expiration: 86400000 # 1 day in ms
 
 encryption:
-  secret-key: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  secret-key: ${ENCRYPTION_SECRET_KEY:}
+
+admin:
+  bootstrap:
+    enabled: ${ADMIN_BOOTSTRAP_ENABLED:false}
+    email: ${ADMIN_BOOTSTRAP_EMAIL:}
+    full-name: ${ADMIN_BOOTSTRAP_FULL_NAME:LegacyVault Admin}
+    password: ${ADMIN_BOOTSTRAP_PASSWORD:}
 
 dms:
   scheduler:

@@ -71,19 +71,20 @@ class AuditLogServiceTest {
     }
 
     @Test
-    void testSearchLogs_EmptyFallback() {
+    void emptySearchReturnsNoPrototypeRows() {
         when(auditLogRepository.searchAuditLogs(isNull(), eq("ALL"), eq("ALL"), isNull(), isNull(), any(PageRequest.class)))
                 .thenReturn(Page.empty());
 
         AuditLogTableResponse response = auditLogService.searchLogs(null, "ALL", "ALL", null, null, 0, 6);
 
         assertNotNull(response);
-        assertEquals(6, response.getLogs().size());
-        assertEquals("Showing 1-6 of 142 audit logs", response.getPagination().getDisplayRange());
+        assertTrue(response.getLogs().isEmpty());
+        assertEquals("Showing 0 of 0 audit logs", response.getPagination().getDisplayRange());
     }
 
     @Test
     void testExportCsv() {
+        when(auditLogRepository.findForExport(isNull(), isNull())).thenReturn(List.of(mockLog));
         byte[] csv = auditLogService.exportCsv(null, null);
 
         assertNotNull(csv);
@@ -91,5 +92,28 @@ class AuditLogServiceTest {
         String text = new String(csv);
         assertTrue(text.contains("TIME,USER,ACTION,TARGET,STATUS,IP_ADDRESS"));
         assertTrue(text.contains("Approve Legal Verification"));
+    }
+
+    @Test
+    void exportEscapesCsvCellsAndUsesDatabaseRows() {
+        mockLog.setUserName("Alex, \"A\"");
+        when(auditLogRepository.findForExport(isNull(), isNull())).thenReturn(List.of(mockLog));
+
+        String csv = new String(auditLogService.exportCsv(null, null));
+
+        assertTrue(csv.contains("\"Alex, \"\"A\"\"\""));
+        assertEquals(2, csv.lines().count());
+    }
+
+    @Test
+    void invalidSearchDateIsRejected() {
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> auditLogService.searchLogs(null, "ALL", "ALL", "not-a-date", null, 0, 6));
+    }
+
+    @Test
+    void invalidPageSizeIsRejected() {
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> auditLogService.searchLogs(null, "ALL", "ALL", null, null, 0, 201));
     }
 }

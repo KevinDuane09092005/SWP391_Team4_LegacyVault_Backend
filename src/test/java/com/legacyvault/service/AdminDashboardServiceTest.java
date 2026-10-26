@@ -37,6 +37,9 @@ class AdminDashboardServiceTest {
     @Mock
     private AuditLogRepository auditLogRepository;
 
+    @Mock
+    private AuditLogService auditLogService;
+
     @InjectMocks
     private AdminDashboardService adminDashboardService;
 
@@ -55,7 +58,7 @@ class AdminDashboardServiceTest {
         when(accessRequestRepository.countByStatus("PENDING")).thenReturn(3L);
         when(notificationRepository.count()).thenReturn(156L);
         when(auditLogRepository.count()).thenReturn(1247L);
-        when(userRepository.findAll()).thenReturn(Collections.emptyList());
+        when(userRepository.findAll(any(org.springframework.data.domain.Sort.class))).thenReturn(Collections.emptyList());
         when(accessRequestRepository.findByStatus("PENDING")).thenReturn(List.of(mockRequest));
 
         AdminDashboardResponse dashboard = adminDashboardService.getAdminDashboard();
@@ -66,8 +69,9 @@ class AdminDashboardServiceTest {
         assertEquals(156, dashboard.getKpiMetrics().getNotificationsSent());
         assertEquals(1247, dashboard.getKpiMetrics().getAuditEvents());
         assertEquals(1, dashboard.getAccessRequestsQueue().size());
-        assertEquals(4, dashboard.getRolesAndPermissionsSummary().size());
-        assertEquals(4, dashboard.getSystemSettingsModules().size());
+        assertEquals(5, dashboard.getRolesAndPermissionsSummary().size());
+        assertTrue(dashboard.getUserManagementPreview().isEmpty());
+        assertTrue(dashboard.getSystemSettingsModules().isEmpty());
     }
 
     @Test
@@ -79,6 +83,8 @@ class AdminDashboardServiceTest {
         assertEquals("APPROVED", mockRequest.getStatus());
         assertEquals("admin-1", mockRequest.getReviewedBy());
         verify(accessRequestRepository).save(mockRequest);
+        verify(auditLogService).recordLog(eq("admin-1"), isNull(), eq("ADMIN"), eq("ACCESS_REQUEST_APPROVED"),
+                eq("req-01"), eq("SUCCESS"), isNull(), any());
     }
 
     @Test
@@ -90,5 +96,28 @@ class AdminDashboardServiceTest {
         assertEquals("REJECTED", mockRequest.getStatus());
         assertEquals("admin-1", mockRequest.getReviewedBy());
         verify(accessRequestRepository).save(mockRequest);
+        verify(auditLogService).recordLog(eq("admin-1"), isNull(), eq("ADMIN"), eq("ACCESS_REQUEST_REJECTED"),
+                eq("req-01"), eq("SUCCESS"), isNull(), any());
+    }
+
+    @Test
+    void accessRequestMustBePendingToReview() {
+        mockRequest.setStatus("APPROVED");
+        when(accessRequestRepository.findById("req-01")).thenReturn(Optional.of(mockRequest));
+
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> adminDashboardService.rejectAccessRequest("req-01", "admin-1"));
+        verify(accessRequestRepository, never()).save(any());
+        verifyNoInteractions(auditLogService);
+    }
+
+    @Test
+    void missingAccessRequestReturnsNotFoundInsteadOfMockSuccess() {
+        when(accessRequestRepository.findById("missing")).thenReturn(Optional.empty());
+
+        var exception = assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> adminDashboardService.approveAccessRequest("missing", "admin-1"));
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, exception.getStatusCode());
+        verifyNoInteractions(auditLogService);
     }
 }

@@ -19,12 +19,16 @@ public class EncryptionService {
     private static final int IV_SIZE = 16;
     private final byte[] keyBytes;
 
-    public EncryptionService(@Value("${encryption.secret-key:default-encryption-secret-key-32b}") String secretKey) {
+    public EncryptionService(@Value("${encryption.secret-key:}") String secretKey) {
+        if (secretKey == null || secretKey.isBlank()) {
+            this.keyBytes = null;
+            return;
+        }
         try {
             MessageDigest sha = MessageDigest.getInstance("SHA-256");
             this.keyBytes = sha.digest(secretKey.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize AES key", e);
+            throw new IllegalStateException("Failed to initialize AES key", e);
         }
     }
 
@@ -32,6 +36,7 @@ public class EncryptionService {
         if (plainText == null || plainText.isEmpty()) {
             return plainText;
         }
+        requireConfiguredKey();
         try {
             byte[] iv = new byte[IV_SIZE];
             SecureRandom random = new SecureRandom();
@@ -58,6 +63,7 @@ public class EncryptionService {
         if (cipherText == null || cipherText.isEmpty()) {
             return cipherText;
         }
+        requireConfiguredKey();
         try {
             byte[] combined = Base64.getDecoder().decode(cipherText);
             if (combined.length <= IV_SIZE) {
@@ -77,6 +83,12 @@ public class EncryptionService {
             return new String(decrypted, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new RuntimeException("Decryption failed", e);
+        }
+    }
+
+    private void requireConfiguredKey() {
+        if (keyBytes == null) {
+            throw new IllegalStateException("ENCRYPTION_SECRET_KEY must be configured before encrypting or decrypting assets");
         }
     }
 }

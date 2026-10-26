@@ -42,4 +42,11 @@ public class EncryptionServiceTest {
     void testDecrypt_InvalidDataThrows() {
         assertThrows(RuntimeException.class, () -> encryptionService.decrypt("invalid-base64-data"));
     }
+
+    @Test
+    void missingSecretDoesNotFallBackToARepositoryDefault() {
+        EncryptionService unconfigured = new EncryptionService("");
+
+        assertThrows(IllegalStateException.class, () -> unconfigured.encrypt("sensitive data"));
+    }
 }

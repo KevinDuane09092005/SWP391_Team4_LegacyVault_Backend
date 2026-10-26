@@ -131,8 +131,14 @@ public class AdminDashboardResponse {
     }
 
     public static class UserPreviewItem {
+        @JsonProperty("user_id")
+        private String userId;
+
         @JsonProperty("name")
         private String name;
+
+        @JsonProperty("email")
+        private String email;
 
         @JsonProperty("role")
         private String role;
@@ -146,14 +152,25 @@ public class AdminDashboardResponse {
         public UserPreviewItem() {}
 
         public UserPreviewItem(String name, String role, String status, String createdDateFormatted) {
+            this(null, name, null, role, status, createdDateFormatted);
+        }
+
+        public UserPreviewItem(String userId, String name, String email, String role, String status,
+                               String createdDateFormatted) {
+            this.userId = userId;
             this.name = name;
+            this.email = email;
             this.role = role;
             this.status = status;
             this.createdDateFormatted = createdDateFormatted;
         }
 
+        public String getUserId() { return userId; }
+        public void setUserId(String userId) { this.userId = userId; }
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
+        public String getEmail() { return email; }
+        public void setEmail(String email) { this.email = email; }
         public String getRole() { return role; }
         public void setRole(String role) { this.role = role; }
         public String getStatus() { return status; }

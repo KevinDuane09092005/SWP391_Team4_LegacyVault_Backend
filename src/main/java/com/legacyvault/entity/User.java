@@ -31,6 +31,9 @@ public class User {
     @Column(name = "is_verified")
     private Boolean isVerified;
 
+    @Column(name = "is_active")
+    private Boolean isActive;
+
     @Column(name = "otp_code", length = 10)
     private String otpCode;
 
@@ -102,6 +105,14 @@ public class User {
         this.isVerified = isVerified;
     }
 
+    public Boolean getIsActive() {
+        return isActive;
+    }
+
+    public void setIsActive(Boolean isActive) {
+        this.isActive = isActive;
+    }
+
     public String getOtpCode() {
         return otpCode;
     }
@@ -143,6 +154,9 @@ public class User {
         }
         if (isVerified == null) {
             isVerified = false;
+        }
+        if (isActive == null) {
+            isActive = true;
         }
     }
 

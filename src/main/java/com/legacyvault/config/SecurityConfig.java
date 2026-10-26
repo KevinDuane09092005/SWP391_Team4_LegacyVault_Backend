@@ -38,6 +38,8 @@ public class SecurityConfig {
                                 "/api/v1/handover/beneficiary/verify-otp",
                                 "/api/v1/handover/trigger"
                         ).permitAll()
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/handover/beneficiary/**").hasRole("BENEFICIARY")
                         .requestMatchers(HttpMethod.GET, "/api/v1/plans").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

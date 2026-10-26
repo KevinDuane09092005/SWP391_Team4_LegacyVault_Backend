@@ -73,6 +73,10 @@ public class AuthService {
         if (!passwordEncoder.matches(password, user.getPasswordHash())) {
             throw new RuntimeException("Invalid credentials");
         }
+
+        if (Boolean.FALSE.equals(user.getIsActive())) {
+            throw new RuntimeException("User account is suspended");
+        }
         
         if (!user.getIsVerified()) {
             throw new RuntimeException("User not verified. Please verify OTP first.");

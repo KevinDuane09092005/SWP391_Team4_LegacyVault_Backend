@@ -7,134 +7,145 @@ import com.legacyvault.repository.AccessRequestRepository;
 import com.legacyvault.repository.AuditLogRepository;
 import com.legacyvault.repository.InAppNotificationRepository;
 import com.legacyvault.repository.UserRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class AdminDashboardService {
 
-    private static final Logger logger = LoggerFactory.getLogger(AdminDashboardService.class);
+    private static final int PREVIEW_LIMIT = 5;
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
+    private static final List<RoleDefinition> ROLE_DEFINITIONS = List.of(
+            new RoleDefinition("VAULT_OWNER", "Vault and asset management"),
+            new RoleDefinition("EXECUTOR", "Handover management and review requests"),
+            new RoleDefinition("BENEFICIARY", "Receive and access released assets"),
+            new RoleDefinition("LEGAL_VERIFIER", "Review legal evidence"),
+            new RoleDefinition("ADMIN", "System administration and access control")
+    );
 
     private final UserRepository userRepository;
     private final AccessRequestRepository accessRequestRepository;
     private final InAppNotificationRepository notificationRepository;
     private final AuditLogRepository auditLogRepository;
+    private final AuditLogService auditLogService;
 
     public AdminDashboardService(UserRepository userRepository,
-                                AccessRequestRepository accessRequestRepository,
-                                InAppNotificationRepository notificationRepository,
-                                AuditLogRepository auditLogRepository) {
+                                 AccessRequestRepository accessRequestRepository,
+                                 InAppNotificationRepository notificationRepository,
+                                 AuditLogRepository auditLogRepository,
+                                 AuditLogService auditLogService) {
         this.userRepository = userRepository;
         this.accessRequestRepository = accessRequestRepository;
         this.notificationRepository = notificationRepository;
         this.auditLogRepository = auditLogRepository;
+        this.auditLogService = auditLogService;
     }
 
     @Transactional(readOnly = true)
     public AdminDashboardResponse getAdminDashboard() {
         long userCount = userRepository.count();
-        long pendingReqCount = accessRequestRepository.countByStatus("PENDING");
-        long notifCount = notificationRepository.count();
+        long pendingRequestCount = accessRequestRepository.countByStatus("PENDING");
+        long notificationCount = notificationRepository.count();
         long auditCount = auditLogRepository.count();
 
-        AdminDashboardResponse.KpiMetrics kpi = new AdminDashboardResponse.KpiMetrics(
-                userCount > 0 ? (int) userCount : 24,
-                "+2% vs last month",
-                pendingReqCount > 0 ? (int) pendingReqCount : 3,
-                "5% urgency rate",
-                notifCount > 0 ? (int) notifCount : 156,
-                "+12% vs last month",
-                auditCount > 0 ? (int) auditCount : 1247,
-                "+8% vs last month"
-        );
+        AdminDashboardResponse.KpiMetrics metrics = new AdminDashboardResponse.KpiMetrics(
+                toInt(userCount), "—",
+                toInt(pendingRequestCount), "—",
+                toInt(notificationCount), "—",
+                toInt(auditCount), "—");
 
-        List<AdminDashboardResponse.UserPreviewItem> usersPreview = new ArrayList<>();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
+        List<User> users = userRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<AdminDashboardResponse.UserPreviewItem> userPreview = users.stream()
+                .limit(PREVIEW_LIMIT)
+                .map(this::toPreview)
+                .toList();
 
-        List<User> users = userRepository.findAll();
-        if (users.isEmpty()) {
-            usersPreview.add(new AdminDashboardResponse.UserPreviewItem("Thanh Pham", "vault_owner", "ACTIVE", "24 Sep 2026"));
-            usersPreview.add(new AdminDashboardResponse.UserPreviewItem("Minh Le", "digital_executor", "ACTIVE", "22 Sep 2026"));
-            usersPreview.add(new AdminDashboardResponse.UserPreviewItem("Alex Mercier", "legal_verifier", "ACTIVE", "20 Sep 2026"));
-            usersPreview.add(new AdminDashboardResponse.UserPreviewItem("Linh Pham", "beneficiary", "PENDING", "18 Sep 2026"));
-        } else {
-            for (User u : users.subList(0, Math.min(users.size(), 4))) {
-                String created = u.getCreatedAt() != null ? u.getCreatedAt().format(dtf) : "24 Sep 2026";
-                usersPreview.add(new AdminDashboardResponse.UserPreviewItem(
-                        u.getFullName(),
-                        u.getRole() != null ? u.getRole().toLowerCase() : "user",
-                        Boolean.TRUE.equals(u.getIsVerified()) ? "ACTIVE" : "PENDING",
-                        created
-                ));
-            }
-        }
+        List<AccessRequest> pendingRequests = new ArrayList<>(accessRequestRepository.findByStatus("PENDING"));
+        pendingRequests.sort(Comparator.comparing(
+                AccessRequest::getCreatedAt,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        List<AdminDashboardResponse.AccessRequestQueueItem> requestQueue = pendingRequests.stream()
+                .limit(PREVIEW_LIMIT)
+                .map(request -> new AdminDashboardResponse.AccessRequestQueueItem(
+                        request.getRequestId(), request.getRequesterName(),
+                        request.getRequestedRole() + ", " + request.getPurpose()))
+                .toList();
 
-        List<AdminDashboardResponse.AccessRequestQueueItem> requestsQueue = new ArrayList<>();
-        List<AccessRequest> pendingRequests = accessRequestRepository.findByStatus("PENDING");
-        if (pendingRequests.isEmpty()) {
-            requestsQueue.add(new AdminDashboardResponse.AccessRequestQueueItem("req-01", "Anthony Walker", "Legal Executor, Case #LV-1042"));
-            requestsQueue.add(new AdminDashboardResponse.AccessRequestQueueItem("req-02", "Elena Rostova", "Legal Verifier, Court Order #CO-88"));
-            requestsQueue.add(new AdminDashboardResponse.AccessRequestQueueItem("req-03", "David Kim", "Auditor, Annual Compliance"));
-        } else {
-            for (AccessRequest req : pendingRequests) {
-                requestsQueue.add(new AdminDashboardResponse.AccessRequestQueueItem(
-                        req.getRequestId(),
-                        req.getRequesterName(),
-                        req.getRequestedRole() + ", " + req.getPurpose()
-                ));
-            }
-        }
+        Map<String, Long> countsByRole = users.stream()
+                .filter(user -> user.getRole() != null)
+                .collect(Collectors.groupingBy(user -> normalizeRole(user.getRole()), Collectors.counting()));
+        List<AdminDashboardResponse.RoleSummaryItem> roles = ROLE_DEFINITIONS.stream()
+                .map(role -> new AdminDashboardResponse.RoleSummaryItem(
+                        role.name(), role.description(), toInt(countsByRole.getOrDefault(role.name(), 0L))))
+                .toList();
 
-        List<AdminDashboardResponse.RoleSummaryItem> rolesSummary = Arrays.asList(
-                new AdminDashboardResponse.RoleSummaryItem("Owner", "Vault asset management, assignments", 14),
-                new AdminDashboardResponse.RoleSummaryItem("Executor", "Handover management, review requests", 6),
-                new AdminDashboardResponse.RoleSummaryItem("Verifier", "Legal document verification, authorization", 3),
-                new AdminDashboardResponse.RoleSummaryItem("Admin", "Full system administration, access control", 1)
-        );
-
-        List<AdminDashboardResponse.SystemSettingModuleItem> settingsModules = Arrays.asList(
-                new AdminDashboardResponse.SystemSettingModuleItem("Security Settings", "Two-factor auth, session timeout, IP restrictions"),
-                new AdminDashboardResponse.SystemSettingModuleItem("Encryption Keys", "Master key rotation, HSM / KMS status (Healthy)"),
-                new AdminDashboardResponse.SystemSettingModuleItem("Backup & Recovery", "Automated daily snapshot, multi-region replication"),
-                new AdminDashboardResponse.SystemSettingModuleItem("API Configuration", "Rate limits, webhook endpoints, OAuth integrations")
-        );
-
-        return new AdminDashboardResponse(kpi, usersPreview, requestsQueue, rolesSummary, settingsModules);
+        // Security, backup and integration settings are not backed by live configuration in this project.
+        // Return no fabricated operational state until those systems have real implementations.
+        return new AdminDashboardResponse(metrics, userPreview, requestQueue, roles, List.of());
     }
 
     @Transactional
     public void approveAccessRequest(String requestId, String adminUserId) {
-        Optional<AccessRequest> opt = accessRequestRepository.findById(requestId);
-        if (opt.isPresent()) {
-            AccessRequest req = opt.get();
-            req.setStatus("APPROVED");
-            req.setReviewedBy(adminUserId);
-            req.setReviewedAt(LocalDateTime.now());
-            accessRequestRepository.save(req);
-            logger.info("Admin {} approved access request {}", adminUserId, requestId);
-        } else {
-            logger.info("Access request {} approved in mock mode", requestId);
-        }
+        decideAccessRequest(requestId, adminUserId, "APPROVED");
     }
 
     @Transactional
     public void rejectAccessRequest(String requestId, String adminUserId) {
-        Optional<AccessRequest> opt = accessRequestRepository.findById(requestId);
-        if (opt.isPresent()) {
-            AccessRequest req = opt.get();
-            req.setStatus("REJECTED");
-            req.setReviewedBy(adminUserId);
-            req.setReviewedAt(LocalDateTime.now());
-            accessRequestRepository.save(req);
-            logger.info("Admin {} rejected access request {}", adminUserId, requestId);
-        } else {
-            logger.info("Access request {} rejected in mock mode", requestId);
-        }
+        decideAccessRequest(requestId, adminUserId, "REJECTED");
     }
+
+    private void decideAccessRequest(String requestId, String adminUserId, String decision) {
+        AccessRequest request = accessRequestRepository.findById(requestId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Access request was not found"));
+        if (!"PENDING".equalsIgnoreCase(request.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Only pending access requests can be reviewed");
+        }
+
+        request.setStatus(decision);
+        request.setReviewedBy(adminUserId);
+        request.setReviewedAt(LocalDateTime.now());
+        accessRequestRepository.save(request);
+
+        User admin = userRepository.findById(adminUserId).orElse(null);
+        auditLogService.recordLog(
+                adminUserId,
+                admin == null ? null : admin.getFullName(),
+                admin == null || admin.getRole() == null ? "ADMIN" : normalizeRole(admin.getRole()),
+                "ACCESS_REQUEST_" + decision,
+                requestId,
+                "SUCCESS",
+                null,
+                "Reviewed request for role " + request.getRequestedRole());
+    }
+
+    private AdminDashboardResponse.UserPreviewItem toPreview(User user) {
+        String created = user.getCreatedAt() == null ? "—" : user.getCreatedAt().format(DATE_FORMAT);
+        String status = Boolean.FALSE.equals(user.getIsActive())
+                ? "SUSPENDED"
+                : Boolean.TRUE.equals(user.getIsVerified()) ? "ACTIVE" : "PENDING";
+        return new AdminDashboardResponse.UserPreviewItem(
+                user.getId(), user.getFullName(), user.getEmail(),
+                user.getRole() == null ? "USER" : normalizeRole(user.getRole()), status, created);
+    }
+
+    static String normalizeRole(String role) {
+        String normalized = role.trim().replace('-', '_').toUpperCase(Locale.ROOT);
+        return "DIGITAL_EXECUTOR".equals(normalized) ? "EXECUTOR" : normalized;
+    }
+
+    private int toInt(long count) {
+        return (int) Math.min(count, Integer.MAX_VALUE);
+    }
+
+    private record RoleDefinition(String name, String description) {}
 }
