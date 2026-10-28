@@ -131,8 +131,14 @@ public class AdminDashboardResponse {
     }
 
     public static class UserPreviewItem {
+        @JsonProperty("user_id")
+        private String userId;
+
         @JsonProperty("name")
         private String name;
+
+        @JsonProperty("email")
+        private String email;
 
         @JsonProperty("role")
         private String role;
@@ -146,14 +152,24 @@ public class AdminDashboardResponse {
         public UserPreviewItem() {}
 
         public UserPreviewItem(String name, String role, String status, String createdDateFormatted) {
+            this(null, name, null, role, status, createdDateFormatted);
+        }
+
+        public UserPreviewItem(String userId, String name, String email, String role, String status, String createdDateFormatted) {
+            this.userId = userId;
             this.name = name;
+            this.email = email;
             this.role = role;
             this.status = status;
             this.createdDateFormatted = createdDateFormatted;
         }
 
+        public String getUserId() { return userId; }
+        public void setUserId(String userId) { this.userId = userId; }
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
+        public String getEmail() { return email; }
+        public void setEmail(String email) { this.email = email; }
         public String getRole() { return role; }
         public void setRole(String role) { this.role = role; }
         public String getStatus() { return status; }
@@ -172,12 +188,29 @@ public class AdminDashboardResponse {
         @JsonProperty("requested_role_or_purpose")
         private String requestedRoleOrPurpose;
 
+        @JsonProperty("case_id")
+        private String caseId;
+
+        @JsonProperty("requested_date")
+        private String requestedDate;
+
+        @JsonProperty("status")
+        private String status;
+
         public AccessRequestQueueItem() {}
 
         public AccessRequestQueueItem(String requestId, String requesterName, String requestedRoleOrPurpose) {
+            this(requestId, requesterName, requestedRoleOrPurpose, null, null, "PENDING");
+        }
+
+        public AccessRequestQueueItem(String requestId, String requesterName, String requestedRoleOrPurpose,
+                                      String caseId, String requestedDate, String status) {
             this.requestId = requestId;
             this.requesterName = requesterName;
             this.requestedRoleOrPurpose = requestedRoleOrPurpose;
+            this.caseId = caseId;
+            this.requestedDate = requestedDate;
+            this.status = status;
         }
 
         public String getRequestId() { return requestId; }
@@ -186,6 +219,12 @@ public class AdminDashboardResponse {
         public void setRequesterName(String requesterName) { this.requesterName = requesterName; }
         public String getRequestedRoleOrPurpose() { return requestedRoleOrPurpose; }
         public void setRequestedRoleOrPurpose(String requestedRoleOrPurpose) { this.requestedRoleOrPurpose = requestedRoleOrPurpose; }
+        public String getCaseId() { return caseId; }
+        public void setCaseId(String caseId) { this.caseId = caseId; }
+        public String getRequestedDate() { return requestedDate; }
+        public void setRequestedDate(String requestedDate) { this.requestedDate = requestedDate; }
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
     }
 
     public static class RoleSummaryItem {

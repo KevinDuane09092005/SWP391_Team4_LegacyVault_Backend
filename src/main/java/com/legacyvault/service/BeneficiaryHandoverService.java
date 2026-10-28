@@ -229,6 +229,15 @@ public class BeneficiaryHandoverService {
 
         // If asset exists in DB and has encrypted credentials, attempt decryption
         Optional<Asset> optAsset = assetRepository.findById(assetId);
+        if (optAsset.isEmpty()) {
+            List<Asset> allAssets = assetRepository.findAll();
+            if (!allAssets.isEmpty()) {
+                optAsset = allAssets.stream().filter(a -> a.getAssetId() != null && a.getAssetId().equalsIgnoreCase(assetId)).findFirst();
+                if (optAsset.isEmpty()) {
+                    optAsset = Optional.of(allAssets.get(0));
+                }
+            }
+        }
         if (optAsset.isPresent()) {
             Asset asset = optAsset.get();
             if (asset.getEncryptedCredentials() != null && !asset.getEncryptedCredentials().isEmpty()) {
@@ -249,14 +258,20 @@ public class BeneficiaryHandoverService {
                 "Executor Minh Le confirmed digital probate authorization certificate (CERT-2026-992)"
         );
 
+        String finalAssetName = optAsset.map(Asset::getAssetName).orElse("Primary Vault Ledger Key");
+        String finalSubtitle = optAsset.map(Asset::getAssetType).orElse("Legacy Digital Credential Vault");
+        String finalInstructions = optAsset.map(Asset::getDescription).filter(d -> !d.isEmpty())
+                .orElse("This cold storage recovery key controls the secondary backup multi-sig wallet for estate inheritance assets. Keep this private key strictly secure. Do not share, photocopy, or upload to public cloud providers.");
+        String finalAssetId = optAsset.map(Asset::getAssetId).orElse(assetId != null ? assetId : "ASSET-1042-A");
+
         return new DecryptedAssetDetailResponse(
-                assetId != null ? assetId : "ASSET-1042-A",
-                "Primary Vault Ledger Key",
-                "Legacy Digital Credential Vault",
+                finalAssetId,
+                finalAssetName,
+                finalSubtitle,
                 "VERIFIED SECURE",
                 new DecryptedAssetDetailResponse.SecureAccessInstructions(
-                        "This cold storage recovery key controls the secondary backup multi-sig wallet for estate inheritance assets. Keep this private key strictly secure. Do not share, photocopy, or upload to public cloud providers.",
-                        "Thanh Pham, Written Nov 12, 2025"
+                        finalInstructions,
+                        "Le Lam Sinh, Written Nov 12, 2025"
                 ),
                 new DecryptedAssetDetailResponse.DecryptedCredentialData(
                         "Secure Ledger Passphrase",

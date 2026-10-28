@@ -91,4 +91,17 @@ public class AuthServiceTest {
         );
         assertEquals("Invalid OTP", exception.getMessage());
     }
+
+    @Test
+    void testLogin_SuspendedAccountIsRejected() {
+        testUser.setIsVerified(true);
+        testUser.setAccountStatus("SUSPENDED");
+        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(testUser));
+        when(passwordEncoder.matches("password", "encoded_password")).thenReturn(true);
+
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> authService.login("test@example.com", "password"));
+
+        assertEquals("Account is suspended. Contact support for assistance.", exception.getMessage());
+    }
 }

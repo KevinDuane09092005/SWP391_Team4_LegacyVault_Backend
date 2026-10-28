@@ -15,10 +15,10 @@ public class DeadMansSwitch {
     private String ownerId;
 
     @Column(name = "check_in_interval_seconds", nullable = false)
-    private int checkInIntervalSeconds = 30;
+    private int checkInIntervalSeconds = 60;
 
     @Column(name = "grace_period_seconds", nullable = false)
-    private int gracePeriodSeconds = 50;
+    private int gracePeriodSeconds = 120;
 
     @Column(name = "status", length = 50)
     private String status = "active";

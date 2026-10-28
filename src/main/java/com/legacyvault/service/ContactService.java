@@ -30,8 +30,17 @@ public class ContactService {
             throw new IllegalArgumentException("Owner ID is required");
         }
 
-        boolean userExists = userRepository.existsByEmail(request.getEmail());
-        String status = userExists ? "verified" : "pending";
+        String normalizedEmail = request.getEmail() != null ? request.getEmail().trim() : "";
+        if (normalizedEmail.isEmpty()) {
+            throw new IllegalArgumentException("Email is required");
+        }
+
+        if (contactRepository.existsByOwnerIdAndEmailIgnoreCase(ownerId, normalizedEmail)) {
+            throw new IllegalArgumentException("Email này đã tồn tại trong danh bạ của bạn. Các liên hệ không được trùng email với nhau.");
+        }
+
+        // Mọi người liên hệ mới đều bắt đầu ở trạng thái "pending" chờ xác nhận qua email
+        String status = "pending";
 
         boolean isBeneficiary = true;
         boolean isExecutor = false;
@@ -52,7 +61,7 @@ public class ContactService {
                 ownerId,
                 request.getFullName(),
                 request.getRelationship(),
-                request.getEmail(),
+                normalizedEmail,
                 null,
                 isBeneficiary,
                 isExecutor,
@@ -61,12 +70,38 @@ public class ContactService {
 
         Contact savedContact = contactRepository.save(contact);
 
-        if ("pending".equals(status)) {
-            String ownerName = userRepository.findById(ownerId).map(u -> u.getFullName()).orElse("Vault Owner");
-            emailService.sendInvitationEmail(savedContact.getEmail(), savedContact.getFullName(), ownerName);
-        }
+        String ownerName = userRepository.findById(ownerId).map(u -> u.getFullName()).orElse("Vault Owner");
+        emailService.sendContactInvitationEmail(
+                savedContact.getEmail(),
+                savedContact.getFullName(),
+                ownerName,
+                savedContact.getRelationship(),
+                expectedRole != null ? expectedRole : "Beneficiary",
+                savedContact.getContactId()
+        );
 
         return mapToResponse(savedContact);
+    }
+
+    @Transactional
+    public ContactResponse respondToInvitation(String contactId, String decision) {
+        if (contactId == null || contactId.isBlank()) {
+            throw new IllegalArgumentException("Contact ID is required");
+        }
+        Contact contact = contactRepository.findById(contactId.trim())
+                .orElseThrow(() -> new RuntimeException("Contact invitation not found"));
+
+        if ("accept".equalsIgnoreCase(decision) || "accepted".equalsIgnoreCase(decision)) {
+            contact.setStatus("verified");
+        } else if ("reject".equalsIgnoreCase(decision) || "rejected".equalsIgnoreCase(decision)
+                || "decline".equalsIgnoreCase(decision)) {
+            contact.setStatus("rejected");
+        } else {
+            throw new IllegalArgumentException("Invalid decision. Use 'accept' or 'reject'.");
+        }
+
+        Contact saved = contactRepository.save(contact);
+        return mapToResponse(saved);
     }
 
     @Transactional(readOnly = true)

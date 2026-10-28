@@ -20,6 +20,8 @@ public interface ContactRepository extends JpaRepository<Contact, String> {
 
     boolean existsByContactIdAndOwnerId(String contactId, String ownerId);
 
+    boolean existsByOwnerIdAndEmailIgnoreCase(String ownerId, String email);
+
     List<Contact> findByEmail(String email);
 
     Optional<Contact> findFirstByEmail(String email);
