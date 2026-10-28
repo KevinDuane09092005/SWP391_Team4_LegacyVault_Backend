@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -65,6 +66,7 @@ public class EmailServiceImpl implements EmailService {
         }
     }
 
+    @Async
     @Override
     public void sendDmsWarningEmail(String toEmail, String ownerName, int daysLeft) {
         try {
@@ -86,6 +88,7 @@ public class EmailServiceImpl implements EmailService {
         }
     }
 
+    @Async
     @Override
     public void sendDmsGracePeriodEmail(String toEmail, String recipientName, String ownerName, int graceDaysLeft,
             boolean isOwner) {
@@ -122,6 +125,7 @@ public class EmailServiceImpl implements EmailService {
         }
     }
 
+    @Async
     @Override
     public void sendHandoverTriggeredNotice(String toEmail, String executorName, String ownerName, String caseNumber) {
         try {

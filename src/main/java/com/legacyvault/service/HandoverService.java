@@ -55,7 +55,7 @@ public class HandoverService {
         String targetOwnerId = ownerId.trim();
         DeadMansSwitch dms = dmsRepository.findByOwnerId(targetOwnerId)
                 .orElseGet(() -> {
-                    DeadMansSwitch defaultDms = new DeadMansSwitch(targetOwnerId, 30, 7);
+                    DeadMansSwitch defaultDms = new DeadMansSwitch(targetOwnerId, 60, 120);
                     return dmsRepository.save(defaultDms);
                 });
 
