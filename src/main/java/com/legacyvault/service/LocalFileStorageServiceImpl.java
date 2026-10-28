@@ -26,7 +26,7 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
     private static final Logger logger = LoggerFactory.getLogger(LocalFileStorageServiceImpl.class);
 
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            ".pdf", ".png", ".jpg", ".jpeg"
+            ".pdf", ".png", ".jpg", ".jpeg", ".docx", ".txt"
     );
 
     @Value("${storage.local.base-dir:uploads}")
@@ -178,6 +178,10 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
             return "image/png";
         } else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
             return "image/jpeg";
+        } else if (lower.endsWith(".txt")) {
+            return "text/plain; charset=UTF-8";
+        } else if (lower.endsWith(".docx")) {
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         }
         return "application/octet-stream";
     }
