@@ -15,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class DmsSchedulerService {
@@ -26,6 +28,7 @@ public class DmsSchedulerService {
     private final ContactRepository contactRepository;
     private final HandoverService handoverService;
     private final EmailService emailService;
+    private final Set<String> graceWarningSentCycles = ConcurrentHashMap.newKeySet();
 
     public DmsSchedulerService(DeadMansSwitchRepository dmsRepository,
                                UserRepository userRepository,
@@ -42,9 +45,9 @@ public class DmsSchedulerService {
     /**
      * Định kỳ quét các cấu hình DMS để chuyển đổi trạng thái FSM:
      * active -> due_soon -> grace_period -> triggered
-     * Chạy định kỳ mỗi 60 giây (hoặc cấu hình cron trong production).
+     * Chạy định kỳ mỗi 10 giây (fixedDelay = 10000) để không bỏ lỡ cửa sổ cảnh báo 20s/30s trong Testing Mode.
      */
-    @Scheduled(fixedDelay = 60000, initialDelay = 10000)
+    @Scheduled(fixedDelay = 10000, initialDelay = 10000)
     @Transactional
     public void scanAndEvaluateDmsStatus() {
         LocalDateTime now = LocalDateTime.now();
@@ -64,6 +67,7 @@ public class DmsSchedulerService {
 
         LocalDateTime graceDeadline = nextDue.plusSeconds(dms.getGracePeriodSeconds());
         String currentStatus = dms.getStatus();
+        boolean isTestingMode = dms.getCheckInIntervalSeconds() < 86400 || dms.getGracePeriodSeconds() < 86400;
 
         // 1. Quá hạn Grace Period -> Kích hoạt bàn giao (Triggered)
         if (now.isAfter(graceDeadline)) {
@@ -80,36 +84,52 @@ public class DmsSchedulerService {
                 logger.warn("DMS {} of owner {} missed check-in! Entering Grace Period.", dms.getDmsId(), dms.getOwnerId());
                 dms.setStatus("grace_period");
                 dmsRepository.save(dms);
+            }
 
-                long graceSecondsLeft = Math.max(1, Duration.between(now, graceDeadline).getSeconds());
-                User owner = userRepository.findById(dms.getOwnerId()).orElse(null);
-                String ownerName = owner != null ? owner.getFullName() : "Vault Owner";
-                String ownerEmail = owner != null ? owner.getEmail() : null;
+            // Gửi mail cảnh báo khi gần hết thời gian Grace Period (ví dụ còn <= 30s đối với chu kỳ 120s)
+            long graceReminderThresholdSeconds = dms.getGracePeriodSeconds() <= 300
+                    ? Math.min(30, Math.max(10, dms.getGracePeriodSeconds() / 3))
+                    : Math.min(3 * 86400L, Math.max(3600L, dms.getGracePeriodSeconds() / 3));
 
-                if (ownerEmail != null) {
-                    emailService.sendDmsGracePeriodEmail(ownerEmail, ownerName, ownerName, (int) graceSecondsLeft, true);
-                }
+            if (now.isAfter(graceDeadline.minusSeconds(graceReminderThresholdSeconds))) {
+                String cycleKey = (dms.getDmsId() != null ? dms.getDmsId() : dms.getOwnerId()) + ":" + nextDue;
+                if (graceWarningSentCycles.add(cycleKey)) {
+                    int graceDaysParam = isTestingMode
+                            ? 0
+                            : (int) Math.max(1, Duration.between(now, graceDeadline).toDays());
+                    User owner = userRepository.findById(dms.getOwnerId()).orElse(null);
+                    String ownerName = owner != null ? owner.getFullName() : "Vault Owner";
+                    String ownerEmail = owner != null ? owner.getEmail() : null;
 
-                List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(dms.getOwnerId());
-                for (Contact executor : executors) {
-                    emailService.sendDmsGracePeriodEmail(executor.getEmail(), executor.getFullName(), ownerName, (int) graceSecondsLeft, false);
+                    if (ownerEmail != null) {
+                        emailService.sendDmsGracePeriodEmail(ownerEmail, ownerName, ownerName, graceDaysParam, true);
+                    }
+
+                    List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(dms.getOwnerId());
+                    for (Contact executor : executors) {
+                        emailService.sendDmsGracePeriodEmail(executor.getEmail(), executor.getFullName(), ownerName, graceDaysParam, false);
+                    }
                 }
             }
             return;
         }
 
-        // 3. Sắp đến hạn Check-in (trong vòng ngưỡng cảnh báo) -> Chuyển sang DUE_SOON
-        long reminderThresholdSeconds = Math.min(10, Math.max(1, dms.getCheckInIntervalSeconds() / 3));
+        // 3. Sắp đến hạn Check-in (gần hết thời gian Check-in Interval) -> Chuyển sang DUE_SOON & gửi mail nhắc Check-in
+        long reminderThresholdSeconds = dms.getCheckInIntervalSeconds() < 180
+                ? Math.min(20, Math.max(10, dms.getCheckInIntervalSeconds() / 3))
+                : Math.min(3 * 86400L, Math.max(60L, dms.getCheckInIntervalSeconds() / 3));
         if (now.isAfter(nextDue.minusSeconds(reminderThresholdSeconds))) {
             if ("active".equalsIgnoreCase(currentStatus)) {
                 logger.info("DMS {} of owner {} due soon. Sending reminder.", dms.getDmsId(), dms.getOwnerId());
                 dms.setStatus("due_soon");
                 dmsRepository.save(dms);
 
-                long secondsLeft = Math.max(1, Duration.between(now, nextDue).getSeconds());
+                int daysParam = isTestingMode
+                        ? 0
+                        : (int) Math.max(1, Duration.between(now, nextDue).toDays());
                 User owner = userRepository.findById(dms.getOwnerId()).orElse(null);
                 if (owner != null && owner.getEmail() != null) {
-                    emailService.sendDmsWarningEmail(owner.getEmail(), owner.getFullName(), (int) secondsLeft);
+                    emailService.sendDmsWarningEmail(owner.getEmail(), owner.getFullName(), daysParam);
                 }
             }
         }

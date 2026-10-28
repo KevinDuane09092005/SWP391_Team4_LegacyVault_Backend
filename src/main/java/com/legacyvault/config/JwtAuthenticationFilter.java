@@ -1,5 +1,7 @@
 package com.legacyvault.config;
 
+import com.legacyvault.entity.User;
+import com.legacyvault.repository.UserRepository;
 import com.legacyvault.service.JwtService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -13,16 +15,19 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository) {
         this.jwtService = jwtService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -37,17 +42,34 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = authHeader.substring(7);
         if (jwtService.validateToken(token)) {
             String userId = jwtService.extractUserId(token);
-            String role = jwtService.extractRole(token);
-            List<SimpleGrantedAuthority> authorities = role != null 
-                    ? List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase())) 
-                    : Collections.emptyList();
-
-            UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(userId, null, authorities);
-            authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+            userRepository.findById(userId)
+                    .filter(this::isActive)
+                    .ifPresent(user -> authenticateRequest(request, user));
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isActive(User user) {
+        return user.getAccountStatus() == null || !"SUSPENDED".equalsIgnoreCase(user.getAccountStatus());
+    }
+
+    private void authenticateRequest(HttpServletRequest request, User user) {
+        String role = user.getRole();
+        List<SimpleGrantedAuthority> authorities = new ArrayList<>();
+        if (role != null && !role.isBlank()) {
+            String upper = role.trim().toUpperCase(Locale.ROOT);
+            authorities.add(new SimpleGrantedAuthority("ROLE_" + upper));
+            if ("ADMIN".equals(upper)) {
+                authorities.add(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN"));
+            } else if ("SYSTEM_ADMIN".equals(upper)) {
+                authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+            }
+        }
+
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(user.getId(), null, authorities);
+        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+        SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 }

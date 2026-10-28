@@ -13,8 +13,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 @Service
@@ -63,53 +66,36 @@ public class AuditLogService {
     @Transactional(readOnly = true)
     public AuditLogTableResponse searchLogs(String search, String role, String action, String fromDate, String toDate,
             int page, int size) {
-        LocalDateTime from = null;
-        LocalDateTime to = null;
-        if (fromDate != null && !fromDate.isBlank()) {
-            try {
-                from = LocalDateTime.parse(fromDate + "T00:00:00");
-            } catch (Exception ignored) {
-            }
+        if (page < 0) {
+            throw new IllegalArgumentException("Page must be zero or greater.");
         }
-        if (toDate != null && !toDate.isBlank()) {
-            try {
-                to = LocalDateTime.parse(toDate + "T23:59:59");
-            } catch (Exception ignored) {
-            }
+        if (size < 1 || size > 100) {
+            throw new IllegalArgumentException("Page size must be between 1 and 100.");
+        }
+        LocalDateTime from = parseDate(fromDate, false);
+        LocalDateTime to = parseDate(toDate, true);
+        if (from != null && to != null && to.isBefore(from)) {
+            throw new IllegalArgumentException("The end date must be on or after the start date.");
         }
 
         Page<AuditLog> resultPage = auditLogRepository.searchAuditLogs(
                 (search != null && !search.isBlank()) ? search.trim() : null,
-                role, action, from, to, PageRequest.of(page, size));
+                normalizeFilter(role), normalizeFilter(action), from, to, PageRequest.of(page, size));
 
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm", Locale.ENGLISH);
 
         List<AuditLogRow> rows = new ArrayList<>();
-        if (resultPage.isEmpty() && page == 0 && (search == null || search.isBlank())) {
-            // Populate prototype default rows matching Screen F7-C
-            rows.add(new AuditLogRow("24 Sep 2026 11:45", "Alex Mercier", "Approve Legal Verification", "Case #LV-1042",
-                    "SUCCESS", "192.168.1.42"));
-            rows.add(new AuditLogRow("24 Sep 2026 10:30", "System Scheduler", "Trigger Handover Workflow",
-                    "Case #LV-1042", "SUCCESS", "127.0.0.1"));
-            rows.add(new AuditLogRow("23 Sep 2026 09:15", "Thanh Pham", "DMS Check-in", "Switch #DMS-001", "SUCCESS",
-                    "192.168.1.100"));
-            rows.add(new AuditLogRow("22 Sep 2026 14:20", "Minh Le", "Submit Review Request", "Case #LV-1042",
-                    "SUCCESS", "192.168.2.15"));
-            rows.add(new AuditLogRow("21 Sep 2026 16:05", "Linh Pham", "Verify OTP", "Session #SES-882", "SUCCESS",
-                    "192.168.3.77"));
-            rows.add(new AuditLogRow("20 Sep 2026 08:30", "System Security", "Failed Login Attempt", "User #USR-999",
-                    "FAILED", "10.0.0.55"));
-
-            AuditLogTableResponse.PaginationInfo pagination = new AuditLogTableResponse.PaginationInfo(142, 1, 24,
-                    "Showing 1-6 of 142 audit logs");
-            return new AuditLogTableResponse(rows, pagination);
-        }
-
         for (AuditLog log : resultPage.getContent()) {
             String timeFormatted = log.getCreatedAt() != null ? log.getCreatedAt().format(dtf) : "Recent";
+            String isoTimestamp = log.getCreatedAt() != null
+                    ? log.getCreatedAt().atOffset(ZoneOffset.UTC).toInstant().toString()
+                    : timeFormatted;
             rows.add(new AuditLogRow(
+                    log.getLogId(),
+                    isoTimestamp,
                     timeFormatted,
                     log.getUserName() != null ? log.getUserName() : "System User",
+                    log.getUserRole() != null ? log.getUserRole() : "SYSTEM",
                     log.getAction(),
                     log.getTarget(),
                     log.getStatus(),
@@ -118,26 +104,57 @@ public class AuditLogService {
 
         long total = resultPage.getTotalElements();
         int totalPages = resultPage.getTotalPages();
-        int start = page * size + 1;
+        int start = total == 0 ? 0 : page * size + 1;
         int end = Math.min((page + 1) * size, (int) total);
         String displayRange = "Showing " + start + "-" + end + " of " + total + " audit logs";
 
-        AuditLogTableResponse.PaginationInfo pagination = new AuditLogTableResponse.PaginationInfo(total, page + 1,
+        AuditLogTableResponse.PaginationInfo pagination = new AuditLogTableResponse.PaginationInfo(total, page,
                 totalPages, displayRange);
         return new AuditLogTableResponse(rows, pagination);
     }
 
     @Transactional(readOnly = true)
     public byte[] exportCsv(String fromDate, String toDate) {
+        LocalDateTime from = parseDate(fromDate, false);
+        LocalDateTime to = parseDate(toDate, true);
+        if (from != null && to != null && to.isBefore(from)) {
+            throw new IllegalArgumentException("The end date must be on or after the start date.");
+        }
+
         StringBuilder csv = new StringBuilder();
         csv.append("TIME,USER,ACTION,TARGET,STATUS,IP_ADDRESS\n");
-        csv.append("24 Sep 2026 11:45,Alex Mercier,Approve Legal Verification,Case #LV-1042,SUCCESS,192.168.1.42\n");
-        csv.append("24 Sep 2026 10:30,System Scheduler,Trigger Handover Workflow,Case #LV-1042,SUCCESS,127.0.0.1\n");
-        csv.append("23 Sep 2026 09:15,Thanh Pham,DMS Check-in,Switch #DMS-001,SUCCESS,192.168.1.100\n");
-        csv.append("22 Sep 2026 14:20,Minh Le,Submit Review Request,Case #LV-1042,SUCCESS,192.168.2.15\n");
-        csv.append("21 Sep 2026 16:05,Linh Pham,Verify OTP,Session #SES-882,SUCCESS,192.168.3.77\n");
-        csv.append("20 Sep 2026 08:30,System Security,Failed Login Attempt,User #USR-999,FAILED,10.0.0.55\n");
+        DateTimeFormatter csvTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        for (AuditLog log : auditLogRepository.findLogsForExport(from, to)) {
+            csv.append(csvEscape(log.getCreatedAt() == null ? "" : log.getCreatedAt().format(csvTime))).append(',')
+                    .append(csvEscape(log.getUserName())).append(',')
+                    .append(csvEscape(log.getAction())).append(',')
+                    .append(csvEscape(log.getTarget())).append(',')
+                    .append(csvEscape(log.getStatus())).append(',')
+                    .append(csvEscape(log.getIpAddress())).append('\n');
+        }
 
         return csv.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private LocalDateTime parseDate(String value, boolean endOfDay) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            LocalDate date = LocalDate.parse(value.trim());
+            return endOfDay ? date.atTime(23, 59, 59, 999_999_999) : date.atStartOfDay();
+        } catch (DateTimeParseException exception) {
+            throw new IllegalArgumentException("Dates must use YYYY-MM-DD format.");
+        }
+    }
+
+    private String normalizeFilter(String value) {
+        return value == null || value.isBlank() || value.equalsIgnoreCase("ALL")
+                ? "ALL" : value.trim();
+    }
+
+    private String csvEscape(String value) {
+        String safe = value == null ? "" : value;
+        return "\"" + safe.replace("\"", "\"\"") + "\"";
     }
 }

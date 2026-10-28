@@ -11,5 +11,7 @@ public interface AccessRequestRepository extends JpaRepository<AccessRequest, St
 
     List<AccessRequest> findByStatus(String status);
 
+    List<AccessRequest> findByStatusOrderByCreatedAtDesc(String status);
+
     long countByStatus(String status);
 }

@@ -52,6 +52,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/v1/auth/**",
+                                "/api/v1/contacts/invitation/**",
                                 "/api/v1/handover/beneficiary/portal-context",
                                 "/api/v1/handover/beneficiary/login-with-code",
                                 "/api/v1/handover/beneficiary/verify-otp",
@@ -59,6 +60,7 @@ public class SecurityConfig {
                                 "/api/v1/legal-verification/documents/**"
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/plans").permitAll()
+                        .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SYSTEM_ADMIN")
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();

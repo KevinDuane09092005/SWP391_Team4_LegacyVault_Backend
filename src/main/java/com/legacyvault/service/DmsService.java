@@ -162,7 +162,10 @@ public class DmsService {
                 currentStatus = "triggered";
             } else if (nextDue != null && now.isAfter(nextDue)) {
                 currentStatus = "grace_period";
-            } else if (nextDue != null && now.isAfter(nextDue.minusSeconds(Math.min(10, Math.max(1, dms.getCheckInIntervalSeconds() / 3))))) {
+            } else if (nextDue != null && now.isAfter(nextDue.minusSeconds(
+                    dms.getCheckInIntervalSeconds() < 180
+                            ? Math.min(20, Math.max(10, dms.getCheckInIntervalSeconds() / 3))
+                            : Math.min(3 * 86400L, Math.max(60L, dms.getCheckInIntervalSeconds() / 3))))) {
                 currentStatus = "due_soon";
             } else {
                 currentStatus = "active";
