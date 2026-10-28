@@ -231,6 +231,40 @@ class BillingServiceTest {
     }
 
     @Test
+    void enablingAutoRenewRequiresActivePaidSubscriptionAndDefaultMethod() {
+        LocalDateTime now = LocalDateTime.now();
+        UserSubscription subscription = new UserSubscription("sub-1", "user-1", "plus",
+                BillingCycle.MONTHLY, SubscriptionStatus.ACTIVE, now.minusDays(1), now.plusDays(29), false);
+        when(subscriptionRepository.findByUserId("user-1")).thenReturn(Optional.of(subscription));
+        when(paymentMethodRepository.findByUserIdAndIsDefaultTrue("user-1"))
+                .thenReturn(Optional.of(paymentMethod));
+        when(subscriptionRepository.save(any(UserSubscription.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = billingService.updateAutoRenewal("user-1", true);
+
+        assertTrue(response.autoRenew());
+        assertEquals(SubscriptionStatus.ACTIVE, response.status());
+        verify(subscriptionRepository).save(subscription);
+    }
+
+    @Test
+    void enablingAutoRenewWithoutDefaultMethodIsRejected() {
+        LocalDateTime now = LocalDateTime.now();
+        UserSubscription subscription = new UserSubscription("sub-1", "user-1", "plus",
+                BillingCycle.MONTHLY, SubscriptionStatus.ACTIVE, now.minusDays(1), now.plusDays(29), false);
+        when(subscriptionRepository.findByUserId("user-1")).thenReturn(Optional.of(subscription));
+        when(paymentMethodRepository.findByUserIdAndIsDefaultTrue("user-1")).thenReturn(Optional.empty());
+
+        BillingException exception = assertThrows(BillingException.class,
+                () -> billingService.updateAutoRenewal("user-1", true));
+
+        assertEquals("DEFAULT_PAYMENT_METHOD_REQUIRED", exception.getCode());
+        assertFalse(subscription.isAutoRenew());
+        verify(subscriptionRepository, never()).save(any(UserSubscription.class));
+    }
+
+    @Test
     void expiredGracePeriodExpiresSubscriptionWithoutDeletingItsAccountRecord() {
         LocalDateTime now = LocalDateTime.now();
         UserSubscription subscription = new UserSubscription("sub-1", "user-1", "plus",

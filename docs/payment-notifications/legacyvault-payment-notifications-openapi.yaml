@@ -59,6 +59,28 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '400': {$ref: '#/components/responses/BadRequest'}
+  /billing/subscription/auto-renew:
+    put:
+      tags: [Billing]
+      summary: Enable or disable automatic renewal for a paid subscription
+      operationId: updateSubscriptionAutoRenewal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAutoRenewRequest'
+      responses:
+        '200':
+          description: Updated subscription renewal setting
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /billing/subscription/retry-payment:
     post:
       tags: [Billing]
@@ -353,6 +375,11 @@ components:
         currentPeriodEndsAt: {type: string, format: date-time, nullable: true}
         gracePeriodEndsAt: {type: string, format: date-time, nullable: true}
         autoRenew: {type: boolean, example: true}
+    UpdateAutoRenewRequest:
+      type: object
+      required: [autoRenew]
+      properties:
+        autoRenew: {type: boolean, example: false}
     CheckoutResponse:
       type: object
       required: [result, subscription]

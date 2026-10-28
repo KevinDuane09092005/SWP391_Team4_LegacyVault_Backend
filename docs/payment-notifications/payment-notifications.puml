@@ -67,9 +67,10 @@ else Renewal declined or method unavailable
   UI -> API: POST /api/v1/billing/subscription/retry-payment
   API -> Service: Retry with current default method
 end
-Owner -> UI: Cancel subscription
-UI -> API: POST /api/v1/billing/subscription/cancel
-API -> Service: Turn off auto-renew; keep paid period active until period end
+Owner -> UI: Toggle automatic renewal on or off
+UI -> API: PUT /api/v1/billing/subscription/auto-renew {autoRenew}
+API -> Service: Update the paid subscription renewal setting
+Service -> DB: Save auto_renew; do not charge immediately
 
 Owner -> UI: Open notification inbox
 UI -> API: GET /api/v1/notifications

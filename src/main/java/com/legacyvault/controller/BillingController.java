@@ -6,6 +6,7 @@ import com.legacyvault.dto.CheckoutResponse;
 import com.legacyvault.dto.PaymentMethodResponse;
 import com.legacyvault.dto.PaymentTransactionListResponse;
 import com.legacyvault.dto.SubscriptionResponse;
+import com.legacyvault.dto.UpdateAutoRenewRequest;
 import com.legacyvault.dto.UpdatePaymentMethodRequest;
 import com.legacyvault.service.BillingException;
 import com.legacyvault.service.BillingService;
@@ -81,6 +82,12 @@ public class BillingController {
     @PostMapping("/subscription/cancel")
     public SubscriptionResponse cancelSubscription(Authentication authentication) {
         return billingService.cancelSubscription(ownerId(authentication));
+    }
+
+    @PutMapping("/subscription/auto-renew")
+    public SubscriptionResponse updateAutoRenewal(Authentication authentication,
+                                                  @Valid @RequestBody UpdateAutoRenewRequest request) {
+        return billingService.updateAutoRenewal(ownerId(authentication), request.autoRenew());
     }
 
     @PostMapping("/subscription/retry-payment")
