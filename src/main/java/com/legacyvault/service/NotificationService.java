@@ -6,17 +6,25 @@ import com.legacyvault.dto.NotificationDetailResponse;
 import com.legacyvault.entity.InAppNotification;
 import com.legacyvault.repository.InAppNotificationRepository;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 
 @Service
 public class NotificationService {
+
+    private static final DateTimeFormatter DISPLAY_TIME = DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a", Locale.ENGLISH);
+    private static final Set<String> PROTOTYPE_NOTIFICATION_IDS = Set.of(
+            "notif-001", "notif-002", "notif-003", "notif-004", "notif-005", "notif-1042-approved");
 
     private final InAppNotificationRepository notificationRepository;
 
@@ -27,11 +35,8 @@ public class NotificationService {
     @Transactional(readOnly = true)
     public NotificationCenterListResponse getNotificationList(String userId, Pageable pageable) {
         Page<InAppNotification> page = notificationRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a", Locale.ENGLISH);
-
         List<NotificationCenterItem> items = new ArrayList<>();
         if (page.isEmpty()) {
-            // Provide prototype default notifications matching Screen F7-A
             items.add(new NotificationCenterItem("notif-001", "Legal Verification Approved",
                     "Legal verification for Case #LV-1042 has been approved by the legal verifier.",
                     "24 Sep 2026, 11:45 AM", "Approved", false));
@@ -50,16 +55,12 @@ public class NotificationService {
             return new NotificationCenterListResponse(items, 2);
         }
 
-        for (InAppNotification notif : page.getContent()) {
-            String timeFormatted = notif.getCreatedAt() != null ? notif.getCreatedAt().format(dtf) : "Recent";
+        for (InAppNotification notification : page.getContent()) {
+            String formattedTime = notification.getCreatedAt() == null
+                    ? "Recent" : notification.getCreatedAt().format(DISPLAY_TIME);
             items.add(new NotificationCenterItem(
-                    notif.getNotificationId(),
-                    notif.getTitle(),
-                    notif.getContent(),
-                    timeFormatted,
-                    notif.getBadgeLabel(),
-                    Boolean.TRUE.equals(notif.getIsRead())
-            ));
+                    notification.getNotificationId(), notification.getTitle(), notification.getContent(),
+                    formattedTime, notification.getBadgeLabel(), Boolean.TRUE.equals(notification.getIsRead())));
         }
 
         int unreadCount = (int) notificationRepository.countByUserIdAndIsReadFalse(userId);
@@ -68,51 +69,59 @@ public class NotificationService {
 
     @Transactional
     public void markAllAsRead(String userId) {
-        List<InAppNotification> unreadList = notificationRepository.findByUserIdAndIsReadFalse(userId);
-        for (InAppNotification notif : unreadList) {
-            notif.setIsRead(true);
-            notificationRepository.save(notif);
+        List<InAppNotification> unreadNotifications = notificationRepository.findByUserIdAndIsReadFalse(userId);
+        for (InAppNotification notification : unreadNotifications) {
+            notification.setIsRead(true);
+            notificationRepository.save(notification);
         }
     }
 
     @Transactional(readOnly = true)
-    public NotificationDetailResponse getNotificationDetail(String notificationId) {
-        Optional<InAppNotification> opt = notificationRepository.findById(notificationId);
-        String title = "Legal Verification Approved";
-        String badge = "Approved";
-        String actionDetails = "The legal verification for Case #LV-1042 has been reviewed and approved by the legal verification team. All documentation has been verified and the case has been moved to Release & Delivery stage for processing.";
-
-        if (opt.isPresent()) {
-            InAppNotification notif = opt.get();
-            title = notif.getTitle();
-            badge = notif.getBadgeLabel();
-            actionDetails = notif.getContent();
+    public NotificationDetailResponse getNotificationDetail(String userId, String notificationId) {
+        Optional<InAppNotification> ownedNotification =
+                notificationRepository.findByNotificationIdAndUserId(notificationId, userId);
+        if (ownedNotification.isPresent()) {
+            InAppNotification notification = ownedNotification.get();
+            String occurredAt = notification.getCreatedAt() == null
+                    ? "Recent" : notification.getCreatedAt().format(DISPLAY_TIME);
+            return new NotificationDetailResponse(
+                    notificationId,
+                    notification.getTitle(),
+                    notification.getBadgeLabel(),
+                    notification.getContent(),
+                    new NotificationDetailResponse.EventMetadata(
+                            null, null, occurredAt, notification.getEventType(), "LegacyVault"),
+                    List.of(new NotificationDetailResponse.TimelineItem(
+                            notification.getTitle(), notification.getContent(), occurredAt)));
         }
 
-        NotificationDetailResponse.EventMetadata metadata = new NotificationDetailResponse.EventMetadata(
-                "Case #LV-1042",
-                "Thanh Pham",
-                "24 Sep 2026, 11:45 AM",
-                "Legal Verification",
-                "Attorney Notary"
-        );
+        if (!PROTOTYPE_NOTIFICATION_IDS.contains(notificationId)) {
+            throw BillingException.notFound();
+        }
+        return prototypeNotificationDetail(notificationId);
+    }
 
+    private NotificationDetailResponse prototypeNotificationDetail(String notificationId) {
+        NotificationDetailResponse.EventMetadata metadata = new NotificationDetailResponse.EventMetadata(
+                "Case #LV-1042", "Thanh Pham", "24 Sep 2026, 11:45 AM", "Legal Verification", "Attorney Notary");
         List<NotificationDetailResponse.TimelineItem> timeline = Arrays.asList(
                 new NotificationDetailResponse.TimelineItem("Legal Verification Approved",
                         "Verification request submitted with death certificate document reviewed & approved", "24 Sep 2026, 11:45 AM"),
                 new NotificationDetailResponse.TimelineItem("Document Review In Progress",
                         "Legal verifier assigned and began examining submitted death certificate", "24 Sep 2026, 10:15 AM"),
                 new NotificationDetailResponse.TimelineItem("Handover Case Triggered",
-                        "Dead Man's Switch timer expired without check-in response", "23 Sep 2026, 08:00 AM")
-        );
-
-        return new NotificationDetailResponse(notificationId, title, badge, actionDetails, metadata, timeline);
+                        "Dead Man's Switch timer expired without check-in response", "23 Sep 2026, 08:00 AM"));
+        return new NotificationDetailResponse(notificationId, "Legal Verification Approved", "Approved",
+                "The legal verification for Case #LV-1042 has been reviewed and approved by the legal verification team. "
+                        + "All documentation has been verified and the case has been moved to Release & Delivery stage for processing.",
+                metadata, timeline);
     }
 
     @Transactional
-    public InAppNotification createNotification(String userId, String title, String content, String eventType, String badgeLabel, String deepLink) {
-        InAppNotification notif = new InAppNotification(userId, title, content, eventType, badgeLabel);
-        notif.setDeepLink(deepLink);
-        return notificationRepository.save(notif);
+    public InAppNotification createNotification(String userId, String title, String content,
+                                                String eventType, String badgeLabel, String deepLink) {
+        InAppNotification notification = new InAppNotification(userId, title, content, eventType, badgeLabel);
+        notification.setDeepLink(deepLink);
+        return notificationRepository.save(notification);
     }
 }

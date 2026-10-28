@@ -1,0 +1,425 @@
+openapi: 3.0.3
+info:
+  title: LegacyVault Billing API (Demo)
+  description: >-
+    Demo-only billing endpoints. Charges are simulated. Payment events are sent
+    to the shared in-app notification service. The API accepts provider tokens
+    and masked card metadata only; it does not accept card numbers or CVV values.
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+security:
+  - bearerAuth: []
+tags:
+  - name: Plans
+  - name: Billing
+paths:
+  /plans:
+    get:
+      tags: [Plans]
+      summary: List public plan prices and limits
+      operationId: listPlans
+      security: []
+      responses:
+        '200':
+          description: Public plan catalog matching the current frontend mock data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Plan'
+  /billing/subscription:
+    get:
+      tags: [Billing]
+      summary: Get the authenticated owner's current plan
+      operationId: getCurrentSubscription
+      responses:
+        '200':
+          description: Current plan or the default Free plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /billing/subscription/cancel:
+    post:
+      tags: [Billing]
+      summary: Turn off automatic renewal at the end of the paid period
+      operationId: cancelSubscriptionRenewal
+      responses:
+        '200':
+          description: Subscription remains active until currentPeriodEndsAt; only future renewal is canceled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+  /billing/subscription/auto-renew:
+    put:
+      tags: [Billing]
+      summary: Enable or disable automatic renewal for a paid subscription
+      operationId: updateSubscriptionAutoRenewal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAutoRenewRequest'
+      responses:
+        '200':
+          description: Updated subscription renewal setting
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /billing/subscription/retry-payment:
+    post:
+      tags: [Billing]
+      summary: Retry a failed subscription renewal with the current default method
+      description: Available only while the subscription is in its seven-day PAST_DUE grace period.
+      operationId: retrySubscriptionPayment
+      responses:
+        '200':
+          description: Renewal succeeded, failed again, or the grace period expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutResponse'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /billing/payment-methods:
+    get:
+      tags: [Billing]
+      summary: List the authenticated owner's saved payment methods
+      operationId: listPaymentMethods
+      responses:
+        '200':
+          description: Masked methods only
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentMethod'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      tags: [Billing]
+      summary: Save a tokenized demo payment method
+      description: >-
+        Vault Owner only. A real integration must tokenize card data with a
+        provider SDK before the request. Do not send card number or CVV. The
+        demo adapter accepts only tokens beginning with pm_mock_.
+      operationId: addPaymentMethod
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddPaymentMethodRequest'
+      responses:
+        '201':
+          description: Payment method saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethod'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /billing/payment-methods/{paymentMethodId}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentMethodId'
+    patch:
+      tags: [Billing]
+      summary: Update expiry or billing address
+      description: Card number and CVV cannot be updated through this API.
+      operationId: updatePaymentMethod
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePaymentMethodRequest'
+      responses:
+        '200':
+          description: Updated masked payment method
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethod'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [Billing]
+      summary: Remove a saved payment method
+      description: The frontend should ask the owner to confirm before calling this endpoint.
+      operationId: removePaymentMethod
+      responses:
+        '204': {description: Method removed}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /billing/payment-methods/{paymentMethodId}/default:
+    parameters:
+      - $ref: '#/components/parameters/PaymentMethodId'
+    put:
+      tags: [Billing]
+      summary: Make a saved payment method the default
+      operationId: setDefaultPaymentMethod
+      responses:
+        '200':
+          description: Updated default method
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethod'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /billing/checkout:
+    post:
+      tags: [Billing]
+      summary: Simulate plan checkout
+      description: >-
+        The server selects the amount from its plan catalog. A mock token ending
+        in _declined returns a recorded failure; other demo tokens are approved.
+        Paid-plan requests must explicitly set acceptRecurringBilling to true.
+        A failed result leaves the current subscription unchanged. Successful
+        paid demo subscriptions auto-renew monthly or yearly using the default
+        saved method. Failed renewal enters a seven-day PAST_DUE grace period.
+        Asset retention and legal handover are not gated by billing status.
+      operationId: checkoutPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '200':
+          description: Checkout outcome, including a normal declined-payment result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutResponse'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /billing/transactions:
+    get:
+      tags: [Billing]
+      summary: List the authenticated owner's payment history
+      operationId: listPaymentTransactions
+      parameters:
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 0, default: 0}
+        - name: size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Payment history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentTransactionList'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    PaymentMethodId:
+      name: paymentMethodId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: Role or ownership does not allow this action
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: Record not found for the authenticated account
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: Conflicting payment method
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    Plan:
+      type: object
+      required: [id, recommended, currency, price, limits]
+      properties:
+        id: {type: string, enum: [free, essentials, plus]}
+        recommended: {type: boolean}
+        currency: {type: string, example: USD}
+        price:
+          type: object
+          required: [monthly, yearly]
+          properties:
+            monthly: {type: number, format: double, example: 4.99}
+            yearly: {type: number, format: double, example: 49.00}
+        limits:
+          type: object
+          required: [collections, records, trustedContacts, attachmentsPerRecord]
+          properties:
+            collections: {type: integer}
+            records: {type: integer}
+            trustedContacts: {type: integer}
+            attachmentsPerRecord: {type: integer}
+    BillingAddress:
+      type: object
+      properties:
+        line1: {type: string, maxLength: 200, nullable: true}
+        city: {type: string, maxLength: 100, nullable: true}
+        postalCode: {type: string, maxLength: 20, nullable: true}
+        country: {type: string, minLength: 2, maxLength: 2, nullable: true}
+    AddPaymentMethodRequest:
+      type: object
+      required: [providerPaymentMethodToken, cardholderName, brand, lastFour, expiryMonth, expiryYear]
+      properties:
+        providerPaymentMethodToken:
+          type: string
+          pattern: '^pm_mock_[A-Za-z0-9_-]{1,80}$'
+          description: Demo token only. Never send a card number or CVV.
+        cardholderName: {type: string, minLength: 1, maxLength: 100}
+        brand: {type: string, enum: [VISA, MASTERCARD, AMEX, OTHER]}
+        lastFour: {type: string, pattern: '^[0-9]{4}$'}
+        expiryMonth: {type: integer, minimum: 1, maximum: 12}
+        expiryYear: {type: integer, minimum: 2000, maximum: 2100}
+        billingAddress:
+          allOf:
+            - $ref: '#/components/schemas/BillingAddress'
+          nullable: true
+        makeDefault: {type: boolean, default: false}
+    UpdatePaymentMethodRequest:
+      type: object
+      required: [expiryMonth, expiryYear]
+      properties:
+        expiryMonth: {type: integer, minimum: 1, maximum: 12}
+        expiryYear: {type: integer, minimum: 2000, maximum: 2100}
+        billingAddress:
+          allOf:
+            - $ref: '#/components/schemas/BillingAddress'
+          nullable: true
+    PaymentMethod:
+      type: object
+      required: [paymentMethodId, cardholderName, brand, lastFour, expiryMonth, expiryYear, isDefault]
+      properties:
+        paymentMethodId: {type: string, format: uuid}
+        cardholderName: {type: string}
+        brand: {type: string}
+        lastFour: {type: string, pattern: '^[0-9]{4}$'}
+        expiryMonth: {type: integer}
+        expiryYear: {type: integer}
+        billingAddress:
+          allOf:
+            - $ref: '#/components/schemas/BillingAddress'
+          nullable: true
+        isDefault: {type: boolean}
+        createdAt: {type: string, format: date-time, nullable: true}
+    CheckoutRequest:
+      type: object
+      required: [planId, billingCycle]
+      properties:
+        planId: {type: string, enum: [free, essentials, plus]}
+        billingCycle: {type: string, enum: [MONTHLY, YEARLY]}
+        paymentMethodId: {type: string, format: uuid, nullable: true}
+        acceptRecurringBilling:
+          type: boolean
+          description: Required as true for paid plans; ignored for the Free plan.
+          example: true
+    Subscription:
+      type: object
+      required: [planId, billingCycle, status, autoRenew]
+      properties:
+        planId: {type: string, enum: [free, essentials, plus]}
+        billingCycle: {type: string, enum: [MONTHLY, YEARLY]}
+        status: {type: string, enum: [ACTIVE, PAST_DUE, EXPIRED, CANCELED]}
+        startedAt: {type: string, format: date-time, nullable: true}
+        currentPeriodEndsAt: {type: string, format: date-time, nullable: true}
+        gracePeriodEndsAt: {type: string, format: date-time, nullable: true}
+        autoRenew: {type: boolean, example: true}
+    UpdateAutoRenewRequest:
+      type: object
+      required: [autoRenew]
+      properties:
+        autoRenew: {type: boolean, example: false}
+    CheckoutResponse:
+      type: object
+      required: [result, subscription]
+      properties:
+        result: {type: string, enum: [SUCCEEDED, FAILED, FREE_PLAN_ACTIVATED, RENEWED, RETRY_FAILED, GRACE_PERIOD_EXPIRED]}
+        transaction:
+          allOf:
+            - $ref: '#/components/schemas/PaymentTransaction'
+          nullable: true
+        subscription:
+          $ref: '#/components/schemas/Subscription'
+    PaymentTransaction:
+      type: object
+      required: [transactionId, planId, billingCycle, amount, currency, status]
+      properties:
+        transactionId: {type: string, format: uuid}
+        planId: {type: string}
+        billingCycle: {type: string, enum: [MONTHLY, YEARLY]}
+        amount: {type: number, example: 4.99}
+        currency: {type: string, minLength: 3, maxLength: 3}
+        status: {type: string, enum: [SUCCEEDED, FAILED]}
+        providerReference: {type: string, nullable: true}
+        failureCode: {type: string, nullable: true}
+        failureMessage: {type: string, nullable: true}
+        paymentMethodBrand: {type: string, nullable: true}
+        paymentMethodLastFour: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time, nullable: true}
+    PaymentTransactionList:
+      type: object
+      required: [transactions, page, size, totalElements]
+      properties:
+        transactions:
+          type: array
+          items: {$ref: '#/components/schemas/PaymentTransaction'}
+        page: {type: integer}
+        size: {type: integer}
+        totalElements: {type: integer, format: int64}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
