@@ -111,6 +111,10 @@ public class UserSubscription {
         this.autoRenew = false;
     }
 
+    public void enableAutoRenewal() {
+        this.autoRenew = true;
+    }
+
     public void cancelAtPeriodEnd() {
         this.status = SubscriptionStatus.CANCELED;
         this.autoRenew = false;

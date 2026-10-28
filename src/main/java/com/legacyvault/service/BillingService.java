@@ -192,6 +192,33 @@ public class BillingService {
         return toSubscriptionResponse(subscription);
     }
 
+    public SubscriptionResponse updateAutoRenewal(String userId, boolean autoRenew) {
+        UserSubscription subscription = currentSubscription(userId);
+        if (subscription.getSubscriptionId().isEmpty() || "free".equalsIgnoreCase(subscription.getPlanId())) {
+            throw BillingException.badRequest("NO_PAID_SUBSCRIPTION", "Auto-renew is only available for a paid subscription.");
+        }
+        if (autoRenew == subscription.isAutoRenew()) return toSubscriptionResponse(subscription);
+
+        if (autoRenew) {
+            if (subscription.getStatus() != SubscriptionStatus.ACTIVE) {
+                throw BillingException.conflict("Only an active subscription can enable auto-renew.");
+            }
+            if (paymentMethodRepository.findByUserIdAndIsDefaultTrue(userId).isEmpty()) {
+                throw BillingException.badRequest("DEFAULT_PAYMENT_METHOD_REQUIRED",
+                        "Set a default payment method before enabling auto-renew.");
+            }
+            subscription.enableAutoRenewal();
+        } else {
+            if (subscription.getStatus() != SubscriptionStatus.ACTIVE
+                    && subscription.getStatus() != SubscriptionStatus.PAST_DUE) {
+                throw BillingException.conflict("This subscription cannot change auto-renew.");
+            }
+            subscription.cancelAutoRenewal();
+        }
+
+        return toSubscriptionResponse(subscriptionRepository.save(subscription));
+    }
+
     public CheckoutResponse retrySubscriptionPayment(String userId) {
         UserSubscription subscription = subscriptionRepository.findByUserId(userId).orElse(null);
         if (subscription == null) {
