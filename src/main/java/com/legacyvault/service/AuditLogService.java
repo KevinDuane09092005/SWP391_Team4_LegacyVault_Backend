@@ -43,12 +43,14 @@ public class AuditLogService {
     }
 
     @Transactional
-    public AuditLog recordLog(String userId, String userName, String userRole, String action, String target, String status, String ipAddress, String details) {
+    public AuditLog recordLog(String userId, String userName, String userRole, String action, String target,
+            String status, String ipAddress, String details) {
         Optional<AuditLog> latest = auditLogRepository.findTopByOrderByCreatedAtDesc();
         String prevHash = latest.map(AuditLog::getCurrentHashSha256)
                 .orElse("0000000000000000000000000000000000000000000000000000000000000000");
 
-        String currentHash = sha256Hex(prevHash + ":" + action + ":" + target + ":" + status + ":" + System.currentTimeMillis());
+        String currentHash = sha256Hex(
+                prevHash + ":" + action + ":" + target + ":" + status + ":" + System.currentTimeMillis());
 
         AuditLog log = new AuditLog(userId, userName, userRole, action, target, status, ipAddress);
         log.setDetails(details);
@@ -59,14 +61,21 @@ public class AuditLogService {
     }
 
     @Transactional(readOnly = true)
-    public AuditLogTableResponse searchLogs(String search, String role, String action, String fromDate, String toDate, int page, int size) {
+    public AuditLogTableResponse searchLogs(String search, String role, String action, String fromDate, String toDate,
+            int page, int size) {
         LocalDateTime from = null;
         LocalDateTime to = null;
         if (fromDate != null && !fromDate.isBlank()) {
-            try { from = LocalDateTime.parse(fromDate + "T00:00:00"); } catch (Exception ignored) {}
+            try {
+                from = LocalDateTime.parse(fromDate + "T00:00:00");
+            } catch (Exception ignored) {
+            }
         }
         if (toDate != null && !toDate.isBlank()) {
-            try { to = LocalDateTime.parse(toDate + "T23:59:59"); } catch (Exception ignored) {}
+            try {
+                to = LocalDateTime.parse(toDate + "T23:59:59");
+            } catch (Exception ignored) {
+            }
         }
 
         Page<AuditLog> resultPage = auditLogRepository.searchAuditLogs(
@@ -78,14 +87,21 @@ public class AuditLogService {
         List<AuditLogRow> rows = new ArrayList<>();
         if (resultPage.isEmpty() && page == 0 && (search == null || search.isBlank())) {
             // Populate prototype default rows matching Screen F7-C
-            rows.add(new AuditLogRow("24 Sep 2026 11:45", "Alex Mercier", "Approve Legal Verification", "Case #LV-1042", "SUCCESS", "192.168.1.42"));
-            rows.add(new AuditLogRow("24 Sep 2026 10:30", "System Scheduler", "Trigger Handover Workflow", "Case #LV-1042", "SUCCESS", "127.0.0.1"));
-            rows.add(new AuditLogRow("23 Sep 2026 09:15", "Thanh Pham", "DMS Check-in", "Switch #DMS-001", "SUCCESS", "192.168.1.100"));
-            rows.add(new AuditLogRow("22 Sep 2026 14:20", "Minh Le", "Submit Review Request", "Case #LV-1042", "SUCCESS", "192.168.2.15"));
-            rows.add(new AuditLogRow("21 Sep 2026 16:05", "Linh Pham", "Verify OTP", "Session #SES-882", "SUCCESS", "192.168.3.77"));
-            rows.add(new AuditLogRow("20 Sep 2026 08:30", "System Security", "Failed Login Attempt", "User #USR-999", "FAILED", "10.0.0.55"));
+            rows.add(new AuditLogRow("24 Sep 2026 11:45", "Alex Mercier", "Approve Legal Verification", "Case #LV-1042",
+                    "SUCCESS", "192.168.1.42"));
+            rows.add(new AuditLogRow("24 Sep 2026 10:30", "System Scheduler", "Trigger Handover Workflow",
+                    "Case #LV-1042", "SUCCESS", "127.0.0.1"));
+            rows.add(new AuditLogRow("23 Sep 2026 09:15", "Thanh Pham", "DMS Check-in", "Switch #DMS-001", "SUCCESS",
+                    "192.168.1.100"));
+            rows.add(new AuditLogRow("22 Sep 2026 14:20", "Minh Le", "Submit Review Request", "Case #LV-1042",
+                    "SUCCESS", "192.168.2.15"));
+            rows.add(new AuditLogRow("21 Sep 2026 16:05", "Linh Pham", "Verify OTP", "Session #SES-882", "SUCCESS",
+                    "192.168.3.77"));
+            rows.add(new AuditLogRow("20 Sep 2026 08:30", "System Security", "Failed Login Attempt", "User #USR-999",
+                    "FAILED", "10.0.0.55"));
 
-            AuditLogTableResponse.PaginationInfo pagination = new AuditLogTableResponse.PaginationInfo(142, 1, 24, "Showing 1-6 of 142 audit logs");
+            AuditLogTableResponse.PaginationInfo pagination = new AuditLogTableResponse.PaginationInfo(142, 1, 24,
+                    "Showing 1-6 of 142 audit logs");
             return new AuditLogTableResponse(rows, pagination);
         }
 
@@ -97,8 +113,7 @@ public class AuditLogService {
                     log.getAction(),
                     log.getTarget(),
                     log.getStatus(),
-                    log.getIpAddress() != null ? log.getIpAddress() : "127.0.0.1"
-            ));
+                    log.getIpAddress() != null ? log.getIpAddress() : "127.0.0.1"));
         }
 
         long total = resultPage.getTotalElements();
@@ -107,7 +122,8 @@ public class AuditLogService {
         int end = Math.min((page + 1) * size, (int) total);
         String displayRange = "Showing " + start + "-" + end + " of " + total + " audit logs";
 
-        AuditLogTableResponse.PaginationInfo pagination = new AuditLogTableResponse.PaginationInfo(total, page + 1, totalPages, displayRange);
+        AuditLogTableResponse.PaginationInfo pagination = new AuditLogTableResponse.PaginationInfo(total, page + 1,
+                totalPages, displayRange);
         return new AuditLogTableResponse(rows, pagination);
     }
 
