@@ -5,8 +5,10 @@ import com.legacyvault.entity.*;
 import com.legacyvault.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -181,11 +183,42 @@ public class BeneficiaryHandoverService {
 
     @Transactional(readOnly = true)
     public KycStatusResponse getKycStatus(String beneficiaryContactId) {
-        return new KycStatusResponse("VERIFIED", "PENDING_SCAN");
+        return getKycStatus(beneficiaryContactId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public KycStatusResponse getKycStatus(String beneficiaryContactId, String caseReference) {
+        if (caseReference != null && !caseReference.isBlank()) {
+            Optional<BeneficiaryClaimSession> claim = claimSessionRepository
+                    .findByCaseIdAndBeneficiaryContactId(caseReference, beneficiaryContactId);
+            if (claim.isEmpty()) {
+                claim = handoverCaseRepository.findByCaseNumber(caseReference)
+                        .flatMap(handoverCase -> claimSessionRepository.findByCaseIdAndBeneficiaryContactId(
+                                handoverCase.getCaseId(), beneficiaryContactId));
+            }
+            return claim
+                    .filter(item -> Boolean.TRUE.equals(item.getIdentityVerified()))
+                    .filter(item -> "ACTIVE".equalsIgnoreCase(item.getTokenStatus()))
+                    .map(item -> new KycStatusResponse(
+                            item.getKycPhotoIdStatus(), item.getKycFacialStatus()))
+                    .orElseGet(() -> new KycStatusResponse("PENDING", "PENDING_SCAN"));
+        }
+        return claimSessionRepository
+                .findTopByBeneficiaryContactIdAndTokenStatusAndIdentityVerifiedTrueOrderByCreatedAtDesc(
+                        beneficiaryContactId, "ACTIVE")
+                .map(session -> new KycStatusResponse(
+                        session.getKycPhotoIdStatus(), session.getKycFacialStatus()))
+                .orElseGet(() -> new KycStatusResponse("PENDING", "PENDING_SCAN"));
     }
 
     @Transactional(readOnly = true)
     public AuthorizedInheritanceAssetsResponse getAuthorizedAssets(String beneficiaryContactId) {
+        return getAuthorizedAssets(null, beneficiaryContactId);
+    }
+
+    @Transactional(readOnly = true)
+    public AuthorizedInheritanceAssetsResponse getAuthorizedAssets(String caseReference, String beneficiaryContactId) {
+        requireVerifiedFace(beneficiaryContactId, caseReference);
         List<AuthorizedInheritanceAssetsResponse.ReadyAssetItem> readyList = new ArrayList<>();
         readyList.add(new AuthorizedInheritanceAssetsResponse.ReadyAssetItem(
                 "ASSET-1042-A",
@@ -224,6 +257,13 @@ public class BeneficiaryHandoverService {
 
     @Transactional(readOnly = true)
     public DecryptedAssetDetailResponse getDecryptedAssetDetail(String assetId, String beneficiaryContactId) {
+        return getDecryptedAssetDetail(assetId, beneficiaryContactId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public DecryptedAssetDetailResponse getDecryptedAssetDetail(
+            String assetId, String beneficiaryContactId, String caseReference) {
+        requireVerifiedFace(beneficiaryContactId, caseReference);
         String passphrase = "autumn · harbor · classic · secure · vault · inheritance · legacy";
         String accessUrl = "https://secure-ledger.legacyvault.com/hardware-024";
 
@@ -275,11 +315,24 @@ public class BeneficiaryHandoverService {
 
     @Transactional
     public void acknowledgeAsset(String assetId, String beneficiaryContactId) {
+        acknowledgeAsset(assetId, beneficiaryContactId, null);
+    }
+
+    @Transactional
+    public void acknowledgeAsset(String assetId, String beneficiaryContactId, String caseReference) {
+        requireVerifiedFace(beneficiaryContactId, caseReference);
         logger.info("Beneficiary {} acknowledged receipt for individual asset {}", beneficiaryContactId, assetId);
     }
 
     @Transactional(readOnly = true)
     public FormalAcknowledgementSummaryResponse getAcknowledgementSummary(String beneficiaryContactId) {
+        return getAcknowledgementSummary(beneficiaryContactId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public FormalAcknowledgementSummaryResponse getAcknowledgementSummary(
+            String beneficiaryContactId, String caseReference) {
+        requireVerifiedFace(beneficiaryContactId, caseReference);
         List<FormalAcknowledgementSummaryResponse.ReleasedAssetItem> releasedAssets = Arrays.asList(
                 new FormalAcknowledgementSummaryResponse.ReleasedAssetItem("Primary Vault Ledger Key", "Hardware Wallet Credential Hash", "VERIFIED"),
                 new FormalAcknowledgementSummaryResponse.ReleasedAssetItem("Family Inheritance Instructions.pdf", "Encrypted PDF Storage Object", "VERIFIED")
@@ -296,15 +349,24 @@ public class BeneficiaryHandoverService {
 
     @Transactional
     public HandoverCompletedResponse confirmReceivedAndCloseCase(String beneficiaryContactId, boolean acceptDigitalEstateCustody, String ipAddress, String userAgent) {
+        return confirmReceivedAndCloseCase(
+                beneficiaryContactId, acceptDigitalEstateCustody, ipAddress, userAgent, null);
+    }
+
+    @Transactional
+    public HandoverCompletedResponse confirmReceivedAndCloseCase(
+            String beneficiaryContactId, boolean acceptDigitalEstateCustody,
+            String ipAddress, String userAgent, String caseReference) {
         if (!acceptDigitalEstateCustody) {
             throw new IllegalArgumentException("Must accept digital estate custody acknowledgment terms to finalize handover.");
         }
+        BeneficiaryClaimSession verifiedClaim = requireVerifiedFace(beneficiaryContactId, caseReference);
 
         String transReceiptHash = "0a7f4e8b39c0e5a1d7f8c2b9a4e6f1c8d5b7a3e2f9c4d8a1b6e7f2c5d8a972bd";
 
         // Save receipt
         HandoverReceipt receipt = new HandoverReceipt();
-        receipt.setCaseId("LV-1042");
+        receipt.setCaseId(verifiedClaim.getCaseId());
         receipt.setAssetId("ASSET-1042-A");
         receipt.setBeneficiaryContactId(beneficiaryContactId != null ? beneficiaryContactId : "beneficiary-contact-uuid");
         receipt.setDigitalReceiptHash(transReceiptHash);
@@ -314,7 +376,7 @@ public class BeneficiaryHandoverService {
         handoverReceiptRepository.save(receipt);
 
         // Update case status if found
-        Optional<HandoverCase> optCase = handoverCaseRepository.findByCaseNumber("LV-1042");
+        Optional<HandoverCase> optCase = handoverCaseRepository.findById(verifiedClaim.getCaseId());
         if (optCase.isPresent()) {
             HandoverCase c = optCase.get();
             c.setStatus("COMPLETED");
@@ -350,5 +412,39 @@ public class BeneficiaryHandoverService {
         }
         String last3 = digits.substring(digits.length() - 3);
         return "+1 (555) **** " + last3;
+    }
+
+    private BeneficiaryClaimSession requireVerifiedFace(String beneficiaryContactId, String caseReference) {
+        BeneficiaryClaimSession session;
+        if (caseReference != null && !caseReference.isBlank()) {
+            Optional<BeneficiaryClaimSession> claim = claimSessionRepository
+                    .findByCaseIdAndBeneficiaryContactId(caseReference, beneficiaryContactId);
+            if (claim.isEmpty()) {
+                claim = handoverCaseRepository.findByCaseNumber(caseReference)
+                        .flatMap(handoverCase -> claimSessionRepository.findByCaseIdAndBeneficiaryContactId(
+                                handoverCase.getCaseId(), beneficiaryContactId));
+            }
+            session = claim
+                    .filter(item -> Boolean.TRUE.equals(item.getIdentityVerified()))
+                    .filter(item -> "ACTIVE".equalsIgnoreCase(item.getTokenStatus()))
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
+                            "Verify the beneficiary one-time code for this case before accessing inherited assets"));
+        } else {
+            List<BeneficiaryClaimSession> activeClaims = claimSessionRepository
+                    .findByBeneficiaryContactIdAndTokenStatus(beneficiaryContactId, "ACTIVE")
+                    .stream()
+                    .filter(item -> Boolean.TRUE.equals(item.getIdentityVerified()))
+                    .toList();
+            if (activeClaims.size() != 1) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Pass case_ref to identify the beneficiary case for this access request");
+            }
+            session = activeClaims.get(0);
+        }
+        if (!"VERIFIED".equalsIgnoreCase(session.getKycFacialStatus())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Complete the face match and liveness check for this beneficiary case before accessing inherited assets");
+        }
+        return session;
     }
 }
