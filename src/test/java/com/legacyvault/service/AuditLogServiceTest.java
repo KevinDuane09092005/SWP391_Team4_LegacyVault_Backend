@@ -71,19 +71,20 @@ class AuditLogServiceTest {
     }
 
     @Test
-    void testSearchLogs_EmptyFallback() {
+    void testSearchLogs_EmptyDatabaseReturnsEmptyPage() {
         when(auditLogRepository.searchAuditLogs(isNull(), eq("ALL"), eq("ALL"), isNull(), isNull(), any(PageRequest.class)))
                 .thenReturn(Page.empty());
 
         AuditLogTableResponse response = auditLogService.searchLogs(null, "ALL", "ALL", null, null, 0, 6);
 
         assertNotNull(response);
-        assertEquals(6, response.getLogs().size());
-        assertEquals("Showing 1-6 of 142 audit logs", response.getPagination().getDisplayRange());
+        assertEquals(0, response.getLogs().size());
+        assertEquals("Showing 0-0 of 0 audit logs", response.getPagination().getDisplayRange());
     }
 
     @Test
     void testExportCsv() {
+        when(auditLogRepository.findLogsForExport(null, null)).thenReturn(List.of(mockLog));
         byte[] csv = auditLogService.exportCsv(null, null);
 
         assertNotNull(csv);

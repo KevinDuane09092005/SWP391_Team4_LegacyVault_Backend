@@ -1,6 +1,8 @@
 package com.legacyvault.config;
 
 import com.legacyvault.service.JwtService;
+import com.legacyvault.entity.User;
+import com.legacyvault.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,9 +22,11 @@ import java.util.List;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository) {
         this.jwtService = jwtService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -37,17 +41,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = authHeader.substring(7);
         if (jwtService.validateToken(token)) {
             String userId = jwtService.extractUserId(token);
-            String role = jwtService.extractRole(token);
-            List<SimpleGrantedAuthority> authorities = role != null 
-                    ? List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase())) 
-                    : Collections.emptyList();
-
-            UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(userId, null, authorities);
-            authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+            userRepository.findById(userId)
+                    .filter(this::isActive)
+                    .ifPresent(user -> authenticateRequest(request, user));
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean isActive(User user) {
+        return user.getAccountStatus() == null || !"SUSPENDED".equalsIgnoreCase(user.getAccountStatus());
+    }
+
+    private void authenticateRequest(HttpServletRequest request, User user) {
+        String role = user.getRole();
+        List<SimpleGrantedAuthority> authorities = role != null
+                ? List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()))
+                : Collections.emptyList();
+
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(user.getId(), null, authorities);
+        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+        SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 }

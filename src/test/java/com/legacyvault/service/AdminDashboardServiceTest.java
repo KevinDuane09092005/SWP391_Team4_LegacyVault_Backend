@@ -37,6 +37,9 @@ class AdminDashboardServiceTest {
     @Mock
     private AuditLogRepository auditLogRepository;
 
+    @Mock
+    private AuditLogService auditLogService;
+
     @InjectMocks
     private AdminDashboardService adminDashboardService;
 
@@ -56,7 +59,7 @@ class AdminDashboardServiceTest {
         when(notificationRepository.count()).thenReturn(156L);
         when(auditLogRepository.count()).thenReturn(1247L);
         when(userRepository.findAll()).thenReturn(Collections.emptyList());
-        when(accessRequestRepository.findByStatus("PENDING")).thenReturn(List.of(mockRequest));
+        when(accessRequestRepository.findByStatusOrderByCreatedAtDesc("PENDING")).thenReturn(List.of(mockRequest));
 
         AdminDashboardResponse dashboard = adminDashboardService.getAdminDashboard();
 
@@ -66,29 +69,53 @@ class AdminDashboardServiceTest {
         assertEquals(156, dashboard.getKpiMetrics().getNotificationsSent());
         assertEquals(1247, dashboard.getKpiMetrics().getAuditEvents());
         assertEquals(1, dashboard.getAccessRequestsQueue().size());
-        assertEquals(4, dashboard.getRolesAndPermissionsSummary().size());
-        assertEquals(4, dashboard.getSystemSettingsModules().size());
+        assertEquals(5, dashboard.getRolesAndPermissionsSummary().size());
+        assertEquals(0, dashboard.getUserManagementPreview().size());
+        assertEquals(0, dashboard.getSystemSettingsModules().size());
     }
 
     @Test
     void testApproveAccessRequest() {
         when(accessRequestRepository.findById("req-01")).thenReturn(Optional.of(mockRequest));
+        when(userRepository.findById("admin-1")).thenReturn(Optional.of(adminUser()));
 
         adminDashboardService.approveAccessRequest("req-01", "admin-1");
 
         assertEquals("APPROVED", mockRequest.getStatus());
         assertEquals("admin-1", mockRequest.getReviewedBy());
         verify(accessRequestRepository).save(mockRequest);
+        verify(auditLogService).recordLog(eq("admin-1"), eq("Admin User"), eq("ADMIN"),
+                eq("ACCESS_REQUEST_APPROVED"), contains("req-01"), eq("SUCCESS"), isNull(), anyString());
     }
 
     @Test
     void testRejectAccessRequest() {
         when(accessRequestRepository.findById("req-01")).thenReturn(Optional.of(mockRequest));
+        when(userRepository.findById("admin-1")).thenReturn(Optional.of(adminUser()));
 
         adminDashboardService.rejectAccessRequest("req-01", "admin-1");
 
         assertEquals("REJECTED", mockRequest.getStatus());
         assertEquals("admin-1", mockRequest.getReviewedBy());
         verify(accessRequestRepository).save(mockRequest);
+        verify(auditLogService).recordLog(eq("admin-1"), eq("Admin User"), eq("ADMIN"),
+                eq("ACCESS_REQUEST_REJECTED"), contains("req-01"), eq("SUCCESS"), isNull(), anyString());
+    }
+
+    @Test
+    void testDecisionRequiresExistingPendingRequest() {
+        when(accessRequestRepository.findById("missing")).thenReturn(Optional.empty());
+
+        assertThrows(com.legacyvault.exception.AdminApiException.class,
+                () -> adminDashboardService.approveAccessRequest("missing", "admin-1"));
+        verify(accessRequestRepository, never()).save(any());
+    }
+
+    private User adminUser() {
+        User admin = new User();
+        admin.setId("admin-1");
+        admin.setFullName("Admin User");
+        admin.setRole("admin");
+        return admin;
     }
 }
