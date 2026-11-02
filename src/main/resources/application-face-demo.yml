@@ -1,0 +1,25 @@
+server:
+  address: 127.0.0.1
+  port: 8081
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:legacyvault_face_demo;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+face-verification:
+  demo:
+    session-minutes: 15
+    liveness-threshold: 0.6
+    anti-spoof-threshold: 0.6
+    face-match-threshold: 0.5
