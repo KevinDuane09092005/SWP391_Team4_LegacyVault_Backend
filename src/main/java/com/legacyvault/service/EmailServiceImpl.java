@@ -83,7 +83,7 @@ public class EmailServiceImpl implements EmailService {
         }
     }
 
-    @Async
+        @Async
     @Override
     public void sendContactInvitationEmail(String toEmail, String contactName, String ownerName,
                                            String relationship, String expectedRole, String contactId) {
@@ -93,7 +93,6 @@ public class EmailServiceImpl implements EmailService {
         String safeRole = expectedRole != null ? expectedRole : "Beneficiary";
         String baseUrl = (backendBaseUrl != null && !backendBaseUrl.isBlank()) ? backendBaseUrl : "http://localhost:8080";
         String acceptUrl = baseUrl + "/api/v1/contacts/invitation/" + contactId + "/respond?decision=accept";
-        String rejectUrl = baseUrl + "/api/v1/contacts/invitation/" + contactId + "/respond?decision=reject";
 
         try {
             MimeMessage mimeMessage = mailSender.createMimeMessage();
@@ -122,19 +121,15 @@ public class EmailServiceImpl implements EmailService {
                           <div>• <strong>Vai trò chỉ định:</strong> %s</div>
                         </div>
                         <p style="font-size: 15px; line-height: 1.6; color: #cbd5e1;">
-                          Vui lòng chọn một trong hai nút dưới đây để xác nhận bạn có đồng ý tham gia vào danh bạ liên hệ của <strong>%s</strong> hay không:
+                          Để xác nhận đồng ý tham gia vào danh bạ liên hệ của <strong>%s</strong>, vui lòng nhấp vào đường liên kết bên dưới:
                         </p>
-                        <div style="margin: 28px 0; text-align: center;">
-                          <a href="%s" style="display: inline-block; background: #10b981; color: #052e16; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 8px; margin-right: 12px; font-size: 15px;">
-                            ✓ Đồng ý thêm vào liên hệ
-                          </a>
-                          <a href="%s" style="display: inline-block; background: #ef4444; color: #ffffff; font-weight: 600; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 15px;">
-                            ✕ Từ chối
-                          </a>
+                        <div style="margin: 20px 0; padding: 14px 18px; background: #1e293b; border-radius: 8px; border: 1px solid #334155; word-break: break-all;">
+                          <a href="%s" style="color: #38bdf8; font-size: 15px; font-weight: 600; text-decoration: underline;">%s</a>
                         </div>
-                        <p style="font-size: 12px; color: #94a3b8; margin-top: 24px; border-top: 1px solid #1e293b; padding-top: 16px;">
-                          Nếu nút bấm không hoạt động, bạn có thể mở trực tiếp đường dẫn sau để đồng ý:<br/>
-                          <a href="%s" style="color: #38bdf8;">%s</a>
+                        <p style="font-size: 13px; color: #94a3b8; margin-top: 24px; border-top: 1px solid #1e293b; padding-top: 16px; line-height: 1.5;">
+                          Nếu bạn không quen biết người gửi hoặc không muốn nhận lời mời này, bạn chỉ cần bỏ qua email này.<br/><br/>
+                          Trân trọng,<br/>
+                          <strong>Đội ngũ LegacyVault</strong>
                         </p>
                       </div>
                     </div>
@@ -145,8 +140,6 @@ public class EmailServiceImpl implements EmailService {
                     safeRelationship,
                     safeRole,
                     safeOwnerName,
-                    acceptUrl,
-                    rejectUrl,
                     acceptUrl,
                     acceptUrl
             );
