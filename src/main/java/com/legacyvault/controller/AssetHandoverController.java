@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -101,13 +102,15 @@ public class AssetHandoverController {
     }
 
     @GetMapping("/beneficiary/kyc-status")
-    public ResponseEntity<?> getBeneficiaryKycStatus(Authentication authentication) {
+    public ResponseEntity<?> getBeneficiaryKycStatus(
+            @RequestParam(name = "case_ref", required = false) String caseRef,
+            Authentication authentication) {
         try {
             String contactId = authentication != null ? authentication.getName() : "beneficiary-contact-uuid";
-            KycStatusResponse response = beneficiaryHandoverService.getKycStatus(contactId);
+            KycStatusResponse response = beneficiaryHandoverService.getKycStatus(contactId, caseRef);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return failureResponse(e);
         }
     }
 
@@ -141,35 +144,44 @@ public class AssetHandoverController {
     // =========================================================================
 
     @GetMapping("/beneficiary/authorized-assets")
-    public ResponseEntity<?> getAuthorizedInheritanceAssets(Authentication authentication) {
+    public ResponseEntity<?> getAuthorizedInheritanceAssets(
+            @RequestParam(name = "case_ref", required = false) String caseRef,
+            Authentication authentication) {
         try {
             String contactId = authentication != null ? authentication.getName() : "beneficiary-contact-uuid";
-            AuthorizedInheritanceAssetsResponse response = beneficiaryHandoverService.getAuthorizedAssets(contactId);
+            AuthorizedInheritanceAssetsResponse response = beneficiaryHandoverService.getAuthorizedAssets(caseRef, contactId);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return failureResponse(e);
         }
     }
 
     @GetMapping("/beneficiary/assets/{assetId}/detail")
-    public ResponseEntity<?> getDecryptedAssetDetail(@PathVariable String assetId, Authentication authentication) {
+    public ResponseEntity<?> getDecryptedAssetDetail(
+            @PathVariable String assetId,
+            @RequestParam(name = "case_ref", required = false) String caseRef,
+            Authentication authentication) {
         try {
             String contactId = authentication != null ? authentication.getName() : "beneficiary-contact-uuid";
-            DecryptedAssetDetailResponse response = beneficiaryHandoverService.getDecryptedAssetDetail(assetId, contactId);
+            DecryptedAssetDetailResponse response = beneficiaryHandoverService
+                    .getDecryptedAssetDetail(assetId, contactId, caseRef);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return failureResponse(e);
         }
     }
 
     @PostMapping("/beneficiary/assets/{assetId}/acknowledge")
-    public ResponseEntity<?> acknowledgeIndividualAsset(@PathVariable String assetId, Authentication authentication) {
+    public ResponseEntity<?> acknowledgeIndividualAsset(
+            @PathVariable String assetId,
+            @RequestParam(name = "case_ref", required = false) String caseRef,
+            Authentication authentication) {
         try {
             String contactId = authentication != null ? authentication.getName() : "beneficiary-contact-uuid";
-            beneficiaryHandoverService.acknowledgeAsset(assetId, contactId);
+            beneficiaryHandoverService.acknowledgeAsset(assetId, contactId, caseRef);
             return ResponseEntity.ok(Map.of("message", "Item receipt acknowledged", "asset_id", assetId));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return failureResponse(e);
         }
     }
 
@@ -178,19 +190,23 @@ public class AssetHandoverController {
     // =========================================================================
 
     @GetMapping("/beneficiary/acknowledgement-summary")
-    public ResponseEntity<?> getAcknowledgementSummary(Authentication authentication) {
+    public ResponseEntity<?> getAcknowledgementSummary(
+            @RequestParam(name = "case_ref", required = false) String caseRef,
+            Authentication authentication) {
         try {
             String contactId = authentication != null ? authentication.getName() : "beneficiary-contact-uuid";
-            FormalAcknowledgementSummaryResponse response = beneficiaryHandoverService.getAcknowledgementSummary(contactId);
+            FormalAcknowledgementSummaryResponse response = beneficiaryHandoverService
+                    .getAcknowledgementSummary(contactId, caseRef);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return failureResponse(e);
         }
     }
 
     @PostMapping("/beneficiary/confirm-received")
     public ResponseEntity<?> confirmReceivedAndCloseCase(
             @Valid @RequestBody ConfirmReceivedRequest request,
+            @RequestParam(name = "case_ref", required = false) String caseRef,
             Authentication authentication,
             HttpServletRequest httpServletRequest) {
         try {
@@ -202,11 +218,12 @@ public class AssetHandoverController {
                     contactId,
                     Boolean.TRUE.equals(request.getAcceptDigitalEstateCustody()),
                     ipAddress,
-                    userAgent
+                    userAgent,
+                    caseRef
             );
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return failureResponse(e);
         }
     }
 
@@ -218,5 +235,16 @@ public class AssetHandoverController {
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    private ResponseEntity<?> failureResponse(Exception error) {
+        if (error instanceof ResponseStatusException statusException) {
+            String reason = statusException.getReason() != null
+                    ? statusException.getReason()
+                    : statusException.getMessage();
+            return ResponseEntity.status(statusException.getStatusCode())
+                    .body(Map.of("error", reason));
+        }
+        return ResponseEntity.badRequest().body(Map.of("error", error.getMessage()));
     }
 }

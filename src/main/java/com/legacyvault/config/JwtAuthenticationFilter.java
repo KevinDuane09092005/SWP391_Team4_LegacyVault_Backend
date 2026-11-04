@@ -43,8 +43,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (jwtService.validateToken(token)) {
             String userId = jwtService.extractUserId(token);
             userRepository.findById(userId)
-                    .filter(this::isActive)
-                    .ifPresent(user -> authenticateRequest(request, user));
+                    .ifPresentOrElse(
+                            user -> {
+                                if (isActive(user)) {
+                                    authenticateRequest(request, user.getId(), user.getRole());
+                                }
+                            },
+                            () -> {
+                                String tokenRole = jwtService.extractRole(token);
+                                if ("BENEFICIARY".equalsIgnoreCase(tokenRole)) {
+                                    authenticateRequest(request, userId, "BENEFICIARY");
+                                }
+                            }
+                    );
         }
 
         filterChain.doFilter(request, response);
@@ -54,8 +65,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return user.getAccountStatus() == null || !"SUSPENDED".equalsIgnoreCase(user.getAccountStatus());
     }
 
-    private void authenticateRequest(HttpServletRequest request, User user) {
-        String role = user.getRole();
+    private void authenticateRequest(HttpServletRequest request, String principalId, String role) {
         List<SimpleGrantedAuthority> authorities = new ArrayList<>();
         if (role != null && !role.isBlank()) {
             String upper = role.trim().toUpperCase(Locale.ROOT);
@@ -68,7 +78,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         UsernamePasswordAuthenticationToken authentication =
-                new UsernamePasswordAuthenticationToken(user.getId(), null, authorities);
+                new UsernamePasswordAuthenticationToken(principalId, null, authorities);
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
         SecurityContextHolder.getContext().setAuthentication(authentication);
     }

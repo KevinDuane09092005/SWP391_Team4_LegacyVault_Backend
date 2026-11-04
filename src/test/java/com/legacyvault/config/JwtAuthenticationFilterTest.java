@@ -61,6 +61,22 @@ class JwtAuthenticationFilterTest {
         assertNull(SecurityContextHolder.getContext().getAuthentication());
     }
 
+    @Test
+    void beneficiaryTokenAuthenticatesWhenSubjectIsAContactNotInUserRepository() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, userRepository);
+        when(jwtService.validateToken("valid-token")).thenReturn(true);
+        when(jwtService.extractUserId("valid-token")).thenReturn("contact-uuid-1");
+        when(userRepository.findById("contact-uuid-1")).thenReturn(Optional.empty());
+        when(jwtService.extractRole("valid-token")).thenReturn("BENEFICIARY");
+
+        filter.doFilter(requestWithToken(), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        assertNotNull(authentication);
+        assertEquals("contact-uuid-1", authentication.getName());
+        assertTrue(authentication.getAuthorities().contains(new SimpleGrantedAuthority("ROLE_BENEFICIARY")));
+    }
+
     private MockHttpServletRequest requestWithToken() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader("Authorization", "Bearer valid-token");
@@ -75,4 +91,3 @@ class JwtAuthenticationFilterTest {
         return user;
     }
 }
-

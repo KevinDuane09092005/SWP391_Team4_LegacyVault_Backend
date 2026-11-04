@@ -17,4 +17,10 @@ public interface BeneficiaryClaimSessionRepository extends JpaRepository<Benefic
     Optional<BeneficiaryClaimSession> findByAccessCodeHash(String accessCodeHash);
 
     List<BeneficiaryClaimSession> findByCaseId(String caseId);
+
+    Optional<BeneficiaryClaimSession> findTopByBeneficiaryContactIdAndTokenStatusAndIdentityVerifiedTrueOrderByCreatedAtDesc(
+            String beneficiaryContactId, String tokenStatus);
+
+    List<BeneficiaryClaimSession> findByBeneficiaryContactIdAndTokenStatus(
+            String beneficiaryContactId, String tokenStatus);
 }

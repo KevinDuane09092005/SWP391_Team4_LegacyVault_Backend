@@ -52,6 +52,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/error",
+                                "/api/v1/demo/face/**",
                                 "/api/v1/auth/**",
                                 "/api/v1/contacts/invitation/**",
                                 "/api/v1/handover/beneficiary/portal-context",
@@ -60,6 +61,7 @@ public class SecurityConfig {
                                 "/api/v1/handover/trigger",
                                 "/api/v1/legal-verification/documents/**"
                         ).permitAll()
+                        .requestMatchers("/api/v1/handover/beneficiary/face/**").hasRole("BENEFICIARY")
                         .requestMatchers(HttpMethod.GET, "/api/v1/plans", "/api/v1/assets/documents/**").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SYSTEM_ADMIN")
                         .anyRequest().authenticated())
