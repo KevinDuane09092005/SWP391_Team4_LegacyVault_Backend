@@ -83,10 +83,22 @@ public class ContactController {
             String errorHtml = """
                     <!DOCTYPE html>
                     <html lang="vi">
-                    <head><meta charset="UTF-8" /><title>LegacyVault - Lỗi xác nhận</title></head>
-                    <body style="margin:0; padding:40px 16px; background:#090d16; color:#f8fafc; font-family:'Segoe UI',Arial,sans-serif; text-align:center;">
-                      <h2>Không thể xử lý yêu cầu</h2>
-                      <p style="color:#94a3b8;">%s</p>
+                    <head>
+                      <meta charset="UTF-8" />
+                      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                      <title>LegacyVault - Lời mời không còn hiệu lực</title>
+                    </head>
+                    <body style="margin:0; padding:40px 16px; background:#090d16; color:#f8fafc; font-family:'Segoe UI',Arial,sans-serif; display:flex; justify-content:center; align-items:center; min-height:80vh;">
+                      <div style="max-width:520px; width:100%%; background:#111827; border:1px solid #1f2937; border-radius:16px; padding:32px; text-align:center; box-shadow:0 20px 40px rgba(0,0,0,0.4);">
+                        <div style="display:inline-block; background:#ef4444; color:#ffffff; font-weight:700; padding:6px 16px; border-radius:999px; font-size:13px; margin-bottom:16px;">
+                          LegacyVault - Thông báo
+                        </div>
+                        <h1 style="margin:0 0 14px; font-size:24px;">Không thể xác nhận lời mời</h1>
+                        <p style="color:#cbd5e1; font-size:15px; line-height:1.6; margin-bottom:28px;">%s</p>
+                        <a href="http://localhost:5173" style="display:inline-block; background:#374151; color:#f8fafc; font-weight:600; text-decoration:none; padding:12px 24px; border-radius:8px; font-size:14px;">
+                          Mở trang chủ LegacyVault
+                        </a>
+                      </div>
                     </body>
                     </html>
                     """.formatted(e.getMessage());
@@ -119,6 +131,41 @@ public class ContactController {
             return ResponseEntity.ok(contact);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/{contactId}/invitation")
+    public ResponseEntity<?> revokeInvitation(
+            Authentication authentication,
+            @PathVariable("contactId") String contactId
+    ) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            ContactResponse response = contactService.revokeContactInvitation(ownerId, contactId);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Đã thu hồi lời mời liên hệ thành công",
+                    "contact", response
+            ));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/{contactId}")
+    public ResponseEntity<?> deleteContact(
+            Authentication authentication,
+            @PathVariable("contactId") String contactId
+    ) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            contactService.deleteContact(ownerId, contactId);
+            return ResponseEntity.ok(Map.of("message", "Đã xóa người liên hệ thành công"));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 

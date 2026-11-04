@@ -91,6 +91,10 @@ public class ContactService {
         Contact contact = contactRepository.findById(contactId.trim())
                 .orElseThrow(() -> new RuntimeException("Contact invitation not found"));
 
+        if ("revoked".equalsIgnoreCase(contact.getStatus())) {
+            throw new IllegalStateException("Lời mời liên hệ này đã bị chủ tài sản thu hồi. Đường dẫn không còn hiệu lực.");
+        }
+
         if ("accept".equalsIgnoreCase(decision) || "accepted".equalsIgnoreCase(decision)) {
             contact.setStatus("verified");
         } else if ("reject".equalsIgnoreCase(decision) || "rejected".equalsIgnoreCase(decision)
@@ -125,6 +129,42 @@ public class ContactService {
         Contact contact = contactRepository.findByContactIdAndOwnerId(contactId, ownerId)
                 .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
         return mapToResponse(contact);
+    }
+
+    @Transactional
+    public ContactResponse revokeContactInvitation(String ownerId, String contactId) {
+        if (ownerId == null || ownerId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Owner ID is required");
+        }
+        if (contactId == null || contactId.isBlank()) {
+            throw new IllegalArgumentException("Contact ID is required");
+        }
+
+        Contact contact = contactRepository.findByContactIdAndOwnerId(contactId.trim(), ownerId.trim())
+                .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
+
+        if (!"pending".equalsIgnoreCase(contact.getStatus())) {
+            throw new IllegalStateException("Chỉ có thể thu hồi lời mời liên hệ đang ở trạng thái chờ (pending).");
+        }
+
+        contact.setStatus("revoked");
+        Contact saved = contactRepository.save(contact);
+        return mapToResponse(saved);
+    }
+
+    @Transactional
+    public void deleteContact(String ownerId, String contactId) {
+        if (ownerId == null || ownerId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Owner ID is required");
+        }
+        if (contactId == null || contactId.isBlank()) {
+            throw new IllegalArgumentException("Contact ID is required");
+        }
+
+        Contact contact = contactRepository.findByContactIdAndOwnerId(contactId.trim(), ownerId.trim())
+                .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
+
+        contactRepository.delete(contact);
     }
 
     private ContactResponse mapToResponse(Contact contact) {
