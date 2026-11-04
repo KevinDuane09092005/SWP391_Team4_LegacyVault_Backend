@@ -98,6 +98,25 @@ public class DmsSchedulerServiceTest {
     }
 
     @Test
+    void testEvaluate_CheckInMissed_SkipsUnverifiedExecutorEmail() {
+        LocalDateTime now = LocalDateTime.now();
+        testDms.setNextCheckInAt(now.minusSeconds(2));
+        testDms.setGracePeriodSeconds(7);
+        testDms.setStatus("active");
+
+        Contact pendingExecutor = new Contact("owner-1", "Pending Exec", "Friend", "pending@legacymail.com", "0900001111", false, true, "pending");
+
+        when(userRepository.findById("owner-1")).thenReturn(Optional.of(testOwner));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-1")).thenReturn(List.of(pendingExecutor));
+
+        schedulerService.evaluateSingleDms(testDms, now);
+
+        assertEquals("grace_period", testDms.getStatus());
+        verify(emailService, times(1)).sendDmsGracePeriodEmail(eq("thanh@example.com"), any(), any(), anyInt(), eq(true));
+        verify(emailService, never()).sendDmsGracePeriodEmail(eq("pending@legacymail.com"), any(), any(), anyInt(), eq(false));
+    }
+
+    @Test
     void testEvaluate_CheckInDueSoon_TransitionsToDueSoonAndWarns() {
         LocalDateTime now = LocalDateTime.now();
         // interval is 30 seconds => threshold is 10s. nextDue is in 5 seconds => within threshold

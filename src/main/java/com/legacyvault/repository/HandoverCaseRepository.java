@@ -28,7 +28,7 @@ public interface HandoverCaseRepository extends JpaRepository<HandoverCase, Stri
 
     long countByStatusIgnoreCase(String status);
 
-    @Query("SELECT c FROM HandoverCase c WHERE (:status IS NULL OR c.status = :status) " +
+    @Query("SELECT c FROM HandoverCase c WHERE (:status IS NULL OR LOWER(c.status) = LOWER(:status)) " +
            "AND (:search IS NULL OR LOWER(c.caseNumber) LIKE LOWER(CONCAT('%', :search, '%')))")
     Page<HandoverCase> searchVerificationQueue(@Param("status") String status,
                                                 @Param("search") String search,

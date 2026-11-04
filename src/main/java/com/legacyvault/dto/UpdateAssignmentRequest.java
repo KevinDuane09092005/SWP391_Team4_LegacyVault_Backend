@@ -1,5 +1,6 @@
 package com.legacyvault.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import java.util.ArrayList;
@@ -7,14 +8,21 @@ import java.util.List;
 
 public class UpdateAssignmentRequest {
 
+    @JsonAlias({"asset_id"})
     private String assetId;
 
     @NotBlank(message = "Executor contact ID is required")
+    @JsonAlias({"executor_contact_id"})
     private String executorContactId;
 
+    @JsonAlias({"handover_protocol"})
+    private String handoverProtocol;
+
+    @JsonAlias({"handover_instructions"})
     private String handoverInstructions;
 
     @NotEmpty(message = "At least one beneficiary contact ID is required")
+    @JsonAlias({"beneficiary_contact_ids"})
     private List<String> beneficiaryContactIds;
 
     public UpdateAssignmentRequest() {}
@@ -48,6 +56,14 @@ public class UpdateAssignmentRequest {
 
     public void setExecutorContactId(String executorContactId) {
         this.executorContactId = executorContactId;
+    }
+
+    public String getHandoverProtocol() {
+        return handoverProtocol;
+    }
+
+    public void setHandoverProtocol(String handoverProtocol) {
+        this.handoverProtocol = handoverProtocol;
     }
 
     public String getHandoverInstructions() {

@@ -44,7 +44,8 @@ public class AssignmentService {
             throw new IllegalArgumentException("Owner ID is required");
         }
 
-        if (request.getBeneficiaryContactIds() == null || request.getBeneficiaryContactIds().isEmpty()) {
+        List<String> distinctBeneficiaryIds = extractDistinctBeneficiaryIds(request.getBeneficiaryContactIds());
+        if (distinctBeneficiaryIds.isEmpty()) {
             throw new IllegalArgumentException("At least one beneficiary contact ID is required");
         }
 
@@ -56,16 +57,22 @@ public class AssignmentService {
             throw new IllegalStateException("Asset already has an active assignment");
         }
 
-        // Validate Executor contact
+        // Validate Executor contact (status == verified AND isExecutor == true)
         Contact executor = contactRepository.findByContactIdAndOwnerId(request.getExecutorContactId(), ownerId)
                 .orElseThrow(() -> new IllegalArgumentException("Executor contact not found or access denied"));
         ensureContactIsVerified(executor, "Người thi hành");
+        if (!Boolean.TRUE.equals(executor.getIsExecutor())) {
+            throw new IllegalArgumentException("Liên hệ \"" + executor.getFullName() + "\" không có vai trò Người thi hành (Executor).");
+        }
 
-        // Validate Beneficiaries contacts
-        for (String beneficiaryId : request.getBeneficiaryContactIds()) {
+        // Validate Beneficiaries contacts (status == verified AND isBeneficiary == true)
+        for (String beneficiaryId : distinctBeneficiaryIds) {
             Contact beneficiary = contactRepository.findByContactIdAndOwnerId(beneficiaryId, ownerId)
                     .orElseThrow(() -> new IllegalArgumentException("Beneficiary contact not found: " + beneficiaryId));
             ensureContactIsVerified(beneficiary, "Người thụ hưởng");
+            if (!Boolean.TRUE.equals(beneficiary.getIsBeneficiary())) {
+                throw new IllegalArgumentException("Liên hệ \"" + beneficiary.getFullName() + "\" không có vai trò Người thụ hưởng (Beneficiary).");
+            }
         }
 
         return Map.of(
@@ -73,7 +80,7 @@ public class AssignmentService {
                 "message", "Assignment configuration is valid",
                 "assetName", asset.getAssetName(),
                 "executorName", executor.getFullName(),
-                "beneficiariesCount", request.getBeneficiaryContactIds().size()
+                "beneficiariesCount", distinctBeneficiaryIds.size()
         );
     }
 
@@ -87,17 +94,24 @@ public class AssignmentService {
         Contact executor = contactRepository.findByContactIdAndOwnerId(request.getExecutorContactId(), ownerId)
                 .orElseThrow(() -> new IllegalArgumentException("Executor not found"));
 
+        List<String> distinctBeneficiaryIds = extractDistinctBeneficiaryIds(request.getBeneficiaryContactIds());
+
         // Save Assignment (instructions contain text notes & custom split descriptions)
         AssetAssignment assignment = new AssetAssignment(
                 request.getAssetId(),
                 request.getExecutorContactId(),
                 request.getHandoverInstructions()
         );
+        String protocol = (request.getHandoverProtocol() != null && !request.getHandoverProtocol().isBlank())
+                ? request.getHandoverProtocol().trim()
+                : "legal_verification";
+        assignment.setHandoverProtocol(protocol);
+
         AssetAssignment savedAssignment = assignmentRepository.save(assignment);
 
         // Save Beneficiaries (linking table)
         List<BeneficiaryDto> savedBeneficiaries = new ArrayList<>();
-        for (String beneficiaryId : request.getBeneficiaryContactIds()) {
+        for (String beneficiaryId : distinctBeneficiaryIds) {
             AssignmentBeneficiary link = new AssignmentBeneficiary(
                     savedAssignment.getAssignmentId(),
                     beneficiaryId
@@ -125,6 +139,7 @@ public class AssignmentService {
                 executor.getContactId(),
                 executor.getFullName(),
                 executor.getEmail(),
+                savedAssignment.getHandoverProtocol(),
                 savedAssignment.getHandoverInstructions(),
                 savedBeneficiaries,
                 savedAssignment.getCreatedAt(),
@@ -160,6 +175,7 @@ public class AssignmentService {
                         executor != null ? executor.getContactId() : assignment.getExecutorContactId(),
                         executor != null ? executor.getFullName() : "",
                         executor != null ? executor.getEmail() : "",
+                        assignment.getHandoverProtocol(),
                         assignment.getHandoverInstructions(),
                         beneficiaryDtos,
                         assignment.getCreatedAt(),
@@ -200,6 +216,7 @@ public class AssignmentService {
                 executor != null ? executor.getContactId() : assignment.getExecutorContactId(),
                 executor != null ? executor.getFullName() : "",
                 executor != null ? executor.getEmail() : "",
+                assignment.getHandoverProtocol(),
                 assignment.getHandoverInstructions(),
                 beneficiaryDtos,
                 assignment.getCreatedAt(),
@@ -218,7 +235,9 @@ public class AssignmentService {
         if (request == null) {
             throw new IllegalArgumentException("Request body cannot be null");
         }
-        if (request.getBeneficiaryContactIds() == null || request.getBeneficiaryContactIds().isEmpty()) {
+
+        List<String> distinctBeneficiaryIds = extractDistinctBeneficiaryIds(request.getBeneficiaryContactIds());
+        if (distinctBeneficiaryIds.isEmpty()) {
             throw new IllegalArgumentException("At least one beneficiary contact ID is required");
         }
 
@@ -234,16 +253,25 @@ public class AssignmentService {
         Contact executor = contactRepository.findByContactIdAndOwnerId(request.getExecutorContactId(), ownerId)
                 .orElseThrow(() -> new IllegalArgumentException("Executor contact not found or access denied"));
         ensureContactIsVerified(executor, "Người thi hành");
+        if (!Boolean.TRUE.equals(executor.getIsExecutor())) {
+            throw new IllegalArgumentException("Liên hệ \"" + executor.getFullName() + "\" không có vai trò Người thi hành (Executor).");
+        }
 
         // 4. Validate Beneficiary contacts
-        for (String beneficiaryId : request.getBeneficiaryContactIds()) {
+        for (String beneficiaryId : distinctBeneficiaryIds) {
             Contact beneficiary = contactRepository.findByContactIdAndOwnerId(beneficiaryId, ownerId)
                     .orElseThrow(() -> new IllegalArgumentException("Beneficiary contact not found: " + beneficiaryId));
             ensureContactIsVerified(beneficiary, "Người thụ hưởng");
+            if (!Boolean.TRUE.equals(beneficiary.getIsBeneficiary())) {
+                throw new IllegalArgumentException("Liên hệ \"" + beneficiary.getFullName() + "\" không có vai trò Người thụ hưởng (Beneficiary).");
+            }
         }
 
         // 5. Update Assignment details
         assignment.setExecutorContactId(request.getExecutorContactId());
+        if (request.getHandoverProtocol() != null && !request.getHandoverProtocol().isBlank()) {
+            assignment.setHandoverProtocol(request.getHandoverProtocol().trim());
+        }
         assignment.setHandoverInstructions(request.getHandoverInstructions());
         assignment.setUpdatedAt(LocalDateTime.now());
         AssetAssignment savedAssignment = assignmentRepository.save(assignment);
@@ -253,7 +281,7 @@ public class AssignmentService {
         beneficiaryRepository.flush();
 
         List<BeneficiaryDto> savedBeneficiaries = new ArrayList<>();
-        for (String beneficiaryId : request.getBeneficiaryContactIds()) {
+        for (String beneficiaryId : distinctBeneficiaryIds) {
             AssignmentBeneficiary link = new AssignmentBeneficiary(
                     savedAssignment.getAssignmentId(),
                     beneficiaryId
@@ -281,6 +309,7 @@ public class AssignmentService {
                 executor.getContactId(),
                 executor.getFullName(),
                 executor.getEmail(),
+                savedAssignment.getHandoverProtocol(),
                 savedAssignment.getHandoverInstructions(),
                 savedBeneficiaries,
                 savedAssignment.getCreatedAt(),
@@ -288,13 +317,46 @@ public class AssignmentService {
         );
     }
 
+    @Transactional
+    public void deleteAssignmentByAssetId(String ownerId, String assetId) {
+        if (ownerId == null || ownerId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Owner ID is required");
+        }
+        if (assetId == null || assetId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Asset ID is required");
+        }
+
+        Asset asset = assetRepository.findByAssetIdAndOwnerId(assetId.trim(), ownerId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Asset not found or access denied"));
+
+        AssetAssignment assignment = assignmentRepository.findByAssetId(asset.getAssetId())
+                .orElseThrow(() -> new RuntimeException("Assignment not found for this asset"));
+
+        beneficiaryRepository.deleteByAssignmentId(assignment.getAssignmentId());
+        assignmentRepository.delete(assignment);
+
+        asset.setStatus("unassigned");
+        assetRepository.save(asset);
+    }
+
+    private List<String> extractDistinctBeneficiaryIds(List<String> rawIds) {
+        if (rawIds == null) {
+            return List.of();
+        }
+        return rawIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .map(String::trim)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
     private void ensureContactIsVerified(Contact contact, String roleLabel) {
         String status = contact.getStatus() != null ? contact.getStatus().trim().toLowerCase() : "pending";
         if (!"verified".equals(status)) {
             String name = contact.getFullName() != null ? contact.getFullName() : "Contact";
-            if ("rejected".equals(status) || "declined".equals(status)) {
+            if ("rejected".equals(status) || "declined".equals(status) || "revoked".equals(status)) {
                 throw new IllegalArgumentException(
-                        roleLabel + " \"" + name + "\" đã từ chối lời mời (Declined). Vui lòng chờ người liên hệ đồng ý thì bạn mới được gán."
+                        roleLabel + " \"" + name + "\" đã từ chối hoặc bị thu hồi lời mời. Vui lòng chờ người liên hệ đồng ý thì bạn mới được gán."
                 );
             }
             throw new IllegalArgumentException(

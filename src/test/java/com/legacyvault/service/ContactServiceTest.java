@@ -3,12 +3,15 @@ package com.legacyvault.service;
 import com.legacyvault.dto.ContactResponse;
 import com.legacyvault.dto.CreateContactRequest;
 import com.legacyvault.entity.Contact;
+import com.legacyvault.entity.DeadMansSwitch;
+import com.legacyvault.entity.User;
+import com.legacyvault.repository.AssetAssignmentRepository;
 import com.legacyvault.repository.ContactRepository;
+import com.legacyvault.repository.DeadMansSwitchRepository;
 import com.legacyvault.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -32,13 +35,25 @@ public class ContactServiceTest {
     @Mock
     private EmailService emailService;
 
-    @InjectMocks
+    @Mock
+    private AssetAssignmentRepository assetAssignmentRepository;
+
+    @Mock
+    private DeadMansSwitchRepository dmsRepository;
+
     private ContactService contactService;
 
     private CreateContactRequest request;
 
     @BeforeEach
     void setUp() {
+        contactService = new ContactService(
+                contactRepository,
+                userRepository,
+                emailService,
+                assetAssignmentRepository,
+                dmsRepository
+        );
         request = new CreateContactRequest(
                 "Tran Thi B",
                 "Spouse",
@@ -74,7 +89,23 @@ public class ContactServiceTest {
     }
 
     @Test
+    void testCreateContact_SelfInvitation_ThrowsException() {
+        User owner = new User();
+        owner.setFullName("Owner Name");
+        owner.setEmail("tranthib@email.com");
+        when(userRepository.findById("owner-123")).thenReturn(Optional.of(owner));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                contactService.createContact("owner-123", request)
+        );
+
+        assertTrue(ex.getMessage().contains("không thể tự thêm email của chính mình"));
+        verify(contactRepository, never()).save(any());
+    }
+
+    @Test
     void testCreateContact_DuplicateEmail_ThrowsException() {
+        when(userRepository.findById("owner-123")).thenReturn(Optional.empty());
         when(contactRepository.existsByOwnerIdAndEmailIgnoreCase("owner-123", "tranthib@email.com")).thenReturn(true);
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
@@ -175,6 +206,109 @@ public class ContactServiceTest {
     }
 
     @Test
+    void testRevokeContactAccess_VerifiedContact_Success() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Lawyer", "tranthib@email.com",
+                null, false, true, "verified");
+        contact.setContactId("contact-uuid-1");
+
+        when(dmsRepository.findByOwnerId("owner-123")).thenReturn(Optional.empty());
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+        when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ContactResponse response = contactService.revokeContactAccess("owner-123", "contact-uuid-1");
+
+        assertNotNull(response);
+        assertEquals("revoked", response.getStatus());
+        verify(contactRepository, times(1)).save(contact);
+    }
+
+    @Test
+    void testRevokeContactAccess_WhenDmsTriggered_ThrowsException() {
+        DeadMansSwitch dms = new DeadMansSwitch();
+        dms.setOwnerId("owner-123");
+        dms.setStatus("triggered");
+
+        when(dmsRepository.findByOwnerId("owner-123")).thenReturn(Optional.of(dms));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                contactService.revokeContactAccess("owner-123", "contact-uuid-1")
+        );
+
+        assertTrue(ex.getMessage().contains("Dead Man's Switch đã được kích hoạt"));
+        verify(contactRepository, never()).save(any());
+    }
+
+    @Test
+    void testResendContactInvitation_Success() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "revoked");
+        contact.setContactId("contact-uuid-1");
+
+        when(dmsRepository.findByOwnerId("owner-123")).thenReturn(Optional.empty());
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+        when(userRepository.findById("owner-123")).thenReturn(Optional.empty());
+        when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ContactResponse response = contactService.resendContactInvitation("owner-123", "contact-uuid-1");
+
+        assertEquals("pending", response.getStatus());
+        verify(emailService, times(1)).sendContactInvitationEmail(
+                eq("tranthib@email.com"),
+                eq("Tran Thi B"),
+                anyString(),
+                eq("Spouse"),
+                eq("Beneficiary"),
+                eq("contact-uuid-1")
+        );
+    }
+
+    @Test
+    void testUpdateContact_UpdatesRoleAndInfo() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                "0901112222", true, false, "verified");
+        contact.setContactId("contact-uuid-1");
+
+        when(dmsRepository.findByOwnerId("owner-123")).thenReturn(Optional.empty());
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+        when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreateContactRequest updateReq = new CreateContactRequest(
+                "Tran Thi B Updated",
+                "Wife & Executor",
+                "tranthib@email.com",
+                "Both"
+        );
+        updateReq.setPhoneNumber("0988889999");
+
+        ContactResponse response = contactService.updateContact("owner-123", "contact-uuid-1", updateReq);
+
+        assertEquals("Tran Thi B Updated", response.getFullName());
+        assertTrue(response.getIsBeneficiary());
+        assertTrue(response.getIsExecutor());
+    }
+
+    @Test
+    void testDeleteContact_AssignedAsExecutor_ThrowsException() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Lawyer", "tranthib@email.com",
+                null, false, true, "verified");
+        contact.setContactId("contact-uuid-1");
+
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+        when(assetAssignmentRepository.existsByExecutorContactId("contact-uuid-1")).thenReturn(true);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                contactService.deleteContact("owner-123", "contact-uuid-1")
+        );
+
+        assertTrue(ex.getMessage().contains("đang được chỉ định làm Người thực thi"));
+        verify(contactRepository, never()).delete(any());
+    }
+
+    @Test
     void testDeleteContact_Success() {
         Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
                 null, true, false, "verified");
@@ -182,6 +316,7 @@ public class ContactServiceTest {
 
         when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
                 .thenReturn(Optional.of(contact));
+        when(assetAssignmentRepository.existsByExecutorContactId("contact-uuid-1")).thenReturn(false);
 
         assertDoesNotThrow(() -> contactService.deleteContact("owner-123", "contact-uuid-1"));
 

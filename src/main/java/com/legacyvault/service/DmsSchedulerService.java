@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @Service
 public class DmsSchedulerService {
@@ -60,6 +61,10 @@ public class DmsSchedulerService {
 
     @Transactional
     public void evaluateSingleDms(DeadMansSwitch dms, LocalDateTime now) {
+        if ("paused".equalsIgnoreCase(dms.getStatus()) || "triggered".equalsIgnoreCase(dms.getStatus())) {
+            return;
+        }
+
         LocalDateTime nextDue = dms.getNextCheckInAt();
         if (nextDue == null) {
             return;
@@ -105,8 +110,11 @@ public class DmsSchedulerService {
                         emailService.sendDmsGracePeriodEmail(ownerEmail, ownerName, ownerName, graceDaysParam, true);
                     }
 
-                    List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(dms.getOwnerId());
-                    for (Contact executor : executors) {
+                    List<Contact> verifiedExecutors = contactRepository.findByOwnerIdAndIsExecutorTrue(dms.getOwnerId())
+                            .stream()
+                            .filter(c -> "verified".equalsIgnoreCase(c.getStatus()))
+                            .collect(Collectors.toList());
+                    for (Contact executor : verifiedExecutors) {
                         emailService.sendDmsGracePeriodEmail(executor.getEmail(), executor.getFullName(), ownerName, graceDaysParam, false);
                     }
                 }

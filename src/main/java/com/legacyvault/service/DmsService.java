@@ -62,7 +62,9 @@ public class DmsService {
             dms = dmsRepository.save(dms);
         }
 
-        if (dmsSchedulerService != null && !"triggered".equalsIgnoreCase(dms.getStatus())) {
+        if (dmsSchedulerService != null
+                && !"triggered".equalsIgnoreCase(dms.getStatus())
+                && !"paused".equalsIgnoreCase(dms.getStatus())) {
             dmsSchedulerService.evaluateSingleDms(dms, LocalDateTime.now());
         }
 
@@ -77,8 +79,8 @@ public class DmsService {
         if (interval == null || interval < 1) {
             throw new IllegalArgumentException("Check-in interval must be at least 1 second");
         }
-        if (grace == null || grace < 1) {
-            throw new IllegalArgumentException("Grace period must be at least 1 second");
+        if (grace == null || grace < 0) {
+            throw new IllegalArgumentException("Grace period must be at least 0 seconds");
         }
 
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
@@ -87,11 +89,12 @@ public class DmsService {
         dms.setCheckInIntervalSeconds(interval);
         dms.setGracePeriodSeconds(grace);
 
-        LocalDateTime lastCheckIn = dms.getLastCheckInAt() != null ? dms.getLastCheckInAt() : LocalDateTime.now();
-        dms.setLastCheckInAt(lastCheckIn);
-        dms.setNextCheckInAt(lastCheckIn.plusSeconds(interval));
+        // Reset lastCheckInAt về thời điểm lưu cấu hình mới để chu kỳ mới không bị hết hạn ngay lập tức
+        LocalDateTime now = LocalDateTime.now();
+        dms.setLastCheckInAt(now);
+        dms.setNextCheckInAt(now.plusSeconds(interval));
 
-        if (!"triggered".equalsIgnoreCase(dms.getStatus())) {
+        if (!"triggered".equalsIgnoreCase(dms.getStatus()) && !"paused".equalsIgnoreCase(dms.getStatus())) {
             dms.setStatus("active");
         }
 
@@ -137,7 +140,13 @@ public class DmsService {
     public List<CheckInLogDto> getAuditLogs(String ownerId) {
         List<CheckInLog> logs = checkInLogRepository.findByOwnerIdOrderByRecordedAtDesc(ownerId);
         return logs.stream()
-                .map(log -> new CheckInLogDto(log.getLogId(), log.getCheckInType(), log.getStatus(), log.getRecordedAt()))
+                .map(log -> new CheckInLogDto(
+                        log.getLogId(),
+                        log.getDmsId(),
+                        log.getCheckInType(),
+                        log.getStatus(),
+                        log.getRecordedAt()
+                ))
                 .collect(Collectors.toList());
     }
 
@@ -157,7 +166,7 @@ public class DmsService {
         LocalDateTime graceDeadline = nextDue != null ? nextDue.plusSeconds(dms.getGracePeriodSeconds()) : now;
 
         String currentStatus = dms.getStatus();
-        if (!"triggered".equalsIgnoreCase(currentStatus)) {
+        if (!"triggered".equalsIgnoreCase(currentStatus) && !"paused".equalsIgnoreCase(currentStatus)) {
             if (nextDue != null && now.isAfter(graceDeadline)) {
                 currentStatus = "triggered";
             } else if (nextDue != null && now.isAfter(nextDue)) {
@@ -173,7 +182,7 @@ public class DmsService {
         }
         response.setStatus(currentStatus);
 
-        if (nextDue != null && nextDue.isAfter(now)) {
+        if (!"paused".equalsIgnoreCase(currentStatus) && nextDue != null && nextDue.isAfter(now)) {
             Duration remaining = Duration.between(now, nextDue);
             response.setSecondsRemaining(Math.max(0, remaining.getSeconds()));
             response.setDaysRemaining(Math.max(0, remaining.toDays()));
@@ -182,7 +191,7 @@ public class DmsService {
             response.setDaysRemaining(0);
         }
 
-        if (nextDue != null && now.isAfter(nextDue) && graceDeadline.isAfter(now)) {
+        if (!"paused".equalsIgnoreCase(currentStatus) && nextDue != null && now.isAfter(nextDue) && graceDeadline.isAfter(now)) {
             Duration graceRemaining = Duration.between(now, graceDeadline);
             response.setGracePeriodSecondsRemaining(Math.max(0, graceRemaining.getSeconds()));
             response.setGracePeriodDaysRemaining(Math.max(0, graceRemaining.toDays()));
@@ -191,9 +200,12 @@ public class DmsService {
             response.setGracePeriodDaysRemaining(0);
         }
 
-        List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(dms.getOwnerId());
-        if (!executors.isEmpty()) {
-            Contact executor = executors.get(0);
+        List<Contact> verifiedExecutors = contactRepository.findByOwnerIdAndIsExecutorTrue(dms.getOwnerId())
+                .stream()
+                .filter(c -> "verified".equalsIgnoreCase(c.getStatus()))
+                .collect(Collectors.toList());
+        if (!verifiedExecutors.isEmpty()) {
+            Contact executor = verifiedExecutors.get(0);
             response.setExecutorName(executor.getFullName());
             response.setExecutorEmail(executor.getEmail());
         }

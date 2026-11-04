@@ -12,4 +12,6 @@ public interface AssetAssignmentRepository extends JpaRepository<AssetAssignment
     Optional<AssetAssignment> findByAssetId(String assetId);
 
     boolean existsByAssetId(String assetId);
+
+    boolean existsByExecutorContactId(String executorContactId);
 }

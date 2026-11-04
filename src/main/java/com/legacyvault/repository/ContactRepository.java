@@ -24,6 +24,8 @@ public interface ContactRepository extends JpaRepository<Contact, String> {
 
     List<Contact> findByEmail(String email);
 
+    List<Contact> findByEmailIgnoreCaseAndStatus(String email, String status);
+
     Optional<Contact> findFirstByEmail(String email);
 
     @Query("SELECT c FROM Contact c WHERE c.ownerId = :ownerId AND " +

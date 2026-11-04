@@ -40,6 +40,9 @@ public class User {
     @Column(name = "otp_expires_at")
     private LocalDateTime otpExpiresAt;
 
+    @Column(name = "last_login_at")
+    private LocalDateTime lastLoginAt;
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
@@ -127,6 +130,14 @@ public class User {
 
     public void setOtpExpiresAt(LocalDateTime otpExpiresAt) {
         this.otpExpiresAt = otpExpiresAt;
+    }
+
+    public LocalDateTime getLastLoginAt() {
+        return lastLoginAt;
+    }
+
+    public void setLastLoginAt(LocalDateTime lastLoginAt) {
+        this.lastLoginAt = lastLoginAt;
     }
 
     public LocalDateTime getCreatedAt() {

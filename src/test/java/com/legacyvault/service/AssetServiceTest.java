@@ -83,6 +83,20 @@ public class AssetServiceTest {
     }
 
     @Test
+    void testGetAssetsByOwner_FilterByStatusAndType() {
+        Asset assignedCrypto = new Asset("owner-uuid", "Crypto Wallet", "MetaMask", "ETH", "enc", null);
+        assignedCrypto.setAssetId("asset-uuid-2");
+        assignedCrypto.setStatus("assigned");
+
+        when(assetRepository.findByOwnerId("owner-uuid")).thenReturn(List.of(testAsset, assignedCrypto));
+
+        List<AssetResponse> responses = assetService.getAssetsByOwner("owner-uuid", "assigned", "crypto_wallet");
+
+        assertEquals(1, responses.size());
+        assertEquals("MetaMask", responses.get(0).getAssetName());
+    }
+
+    @Test
     void testGetAssetDetail_Success() {
         when(assetRepository.findByAssetIdAndOwnerId("asset-uuid-1", "owner-uuid"))
                 .thenReturn(Optional.of(testAsset));
@@ -173,5 +187,28 @@ public class AssetServiceTest {
         );
 
         assertTrue(exception.getMessage().contains("Asset not found or access denied"));
+    }
+
+    @Test
+    void testDeleteAsset_Success() {
+        when(assetRepository.findByAssetIdAndOwnerId("asset-uuid-1", "owner-uuid"))
+                .thenReturn(Optional.of(testAsset));
+
+        assertDoesNotThrow(() -> assetService.deleteAsset("owner-uuid", "asset-uuid-1"));
+
+        verify(assetRepository, times(1)).delete(testAsset);
+    }
+
+    @Test
+    void testDeleteAsset_NotFound_ThrowsException() {
+        when(assetRepository.findByAssetIdAndOwnerId("asset-uuid-1", "wrong-owner-id"))
+                .thenReturn(Optional.empty());
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () ->
+                assetService.deleteAsset("wrong-owner-id", "asset-uuid-1")
+        );
+
+        assertTrue(ex.getMessage().contains("Asset not found or access denied"));
+        verify(assetRepository, never()).delete(any());
     }
 }

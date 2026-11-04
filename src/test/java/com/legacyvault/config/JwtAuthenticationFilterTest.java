@@ -62,6 +62,18 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void deactivatedUserTokenDoesNotAuthenticate() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, userRepository);
+        when(jwtService.validateToken("valid-token")).thenReturn(true);
+        when(jwtService.extractUserId("valid-token")).thenReturn("user-1");
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user("user-1", "vault_owner", "DEACTIVATED")));
+
+        filter.doFilter(requestWithToken(), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    @Test
     void beneficiaryTokenAuthenticatesWhenSubjectIsAContactNotInUserRepository() throws Exception {
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, userRepository);
         when(jwtService.validateToken("valid-token")).thenReturn(true);

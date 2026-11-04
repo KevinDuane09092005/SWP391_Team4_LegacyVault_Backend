@@ -89,6 +89,45 @@ public class AssignmentServiceTest {
     }
 
     @Test
+    void testValidateAssignment_ContactWithoutExecutorRole_ThrowsException() {
+        Contact onlyBeneficiary = new Contact("owner-1", "Tran Thi B", "Spouse", "tranthib@email.com", "0123", true, false, "verified");
+        onlyBeneficiary.setContactId("not-an-executor");
+
+        CreateAssignmentRequest badRequest = new CreateAssignmentRequest(
+                "asset-1", "not-an-executor", "Instructions", List.of("beneficiary-1")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.existsByAssetId("asset-1")).thenReturn(false);
+        when(contactRepository.findByContactIdAndOwnerId("not-an-executor", "owner-1")).thenReturn(Optional.of(onlyBeneficiary));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                assignmentService.validateAssignment("owner-1", badRequest)
+        );
+        assertTrue(ex.getMessage().contains("không có vai trò Người thi hành (Executor)"));
+    }
+
+    @Test
+    void testValidateAssignment_ContactWithoutBeneficiaryRole_ThrowsException() {
+        Contact onlyExecutor = new Contact("owner-1", "Le Van D", "Attorney", "levand@email.com", "0123", false, true, "verified");
+        onlyExecutor.setContactId("not-a-beneficiary");
+
+        CreateAssignmentRequest badRequest = new CreateAssignmentRequest(
+                "asset-1", "executor-1", "Instructions", List.of("not-a-beneficiary")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.existsByAssetId("asset-1")).thenReturn(false);
+        when(contactRepository.findByContactIdAndOwnerId("executor-1", "owner-1")).thenReturn(Optional.of(testExecutor));
+        when(contactRepository.findByContactIdAndOwnerId("not-a-beneficiary", "owner-1")).thenReturn(Optional.of(onlyExecutor));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                assignmentService.validateAssignment("owner-1", badRequest)
+        );
+        assertTrue(ex.getMessage().contains("không có vai trò Người thụ hưởng (Beneficiary)"));
+    }
+
+    @Test
     void testValidateAssignment_UnverifiedContact_ThrowsException() {
         Contact pendingBeneficiary = new Contact("owner-1", "OGGY", "Child", "oggy@email.com", "0123", true, false, "pending");
         pendingBeneficiary.setContactId("beneficiary-pending");
@@ -143,11 +182,36 @@ public class AssignmentServiceTest {
         assertNotNull(response);
         assertEquals("asset-1", response.getAssetId());
         assertEquals("executor-1", response.getExecutorContactId());
+        assertEquals("legal_verification", response.getHandoverProtocol());
         assertEquals(2, response.getBeneficiaries().size());
         assertTrue(response.getHandoverInstructions().contains("Tran Thi B (Spouse): 60%"));
         assertEquals("assigned", testAsset.getStatus());
         verify(assetRepository, times(1)).save(testAsset);
         verify(beneficiaryRepository, times(2)).save(any(AssignmentBeneficiary.class));
+    }
+
+    @Test
+    void testCreateAssignment_DeduplicatesBeneficiaryContactIds() {
+        CreateAssignmentRequest duplicateBeneficiariesRequest = new CreateAssignmentRequest(
+                "asset-1", "executor-1", "Instructions", List.of("beneficiary-1", "beneficiary-1")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.existsByAssetId("asset-1")).thenReturn(false);
+        when(contactRepository.findByContactIdAndOwnerId("executor-1", "owner-1")).thenReturn(Optional.of(testExecutor));
+        when(contactRepository.findByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(Optional.of(testBeneficiary1));
+
+        when(assignmentRepository.save(any(AssetAssignment.class))).thenAnswer(invocation -> {
+            AssetAssignment a = invocation.getArgument(0);
+            a.setAssignmentId("assignment-uuid-1");
+            return a;
+        });
+        when(contactRepository.findById("beneficiary-1")).thenReturn(Optional.of(testBeneficiary1));
+
+        AssignmentResponse response = assignmentService.createAssignment("owner-1", duplicateBeneficiariesRequest);
+
+        assertEquals(1, response.getBeneficiaries().size());
+        verify(beneficiaryRepository, times(1)).save(any(AssignmentBeneficiary.class));
     }
 
     @Test
@@ -254,5 +318,22 @@ public class AssignmentServiceTest {
         );
 
         assertTrue(exception.getMessage().contains("Executor contact not found"));
+    }
+
+    @Test
+    void testDeleteAssignmentByAssetId_Success() {
+        testAsset.setStatus("assigned");
+        AssetAssignment existingAssignment = new AssetAssignment("asset-1", "executor-1", "Instructions");
+        existingAssignment.setAssignmentId("assignment-1");
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.findByAssetId("asset-1")).thenReturn(Optional.of(existingAssignment));
+
+        assertDoesNotThrow(() -> assignmentService.deleteAssignmentByAssetId("owner-1", "asset-1"));
+
+        assertEquals("unassigned", testAsset.getStatus());
+        verify(beneficiaryRepository, times(1)).deleteByAssignmentId("assignment-1");
+        verify(assignmentRepository, times(1)).delete(existingAssignment);
+        verify(assetRepository, times(1)).save(testAsset);
     }
 }

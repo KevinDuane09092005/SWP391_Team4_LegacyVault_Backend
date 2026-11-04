@@ -46,7 +46,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     .ifPresentOrElse(
                             user -> {
                                 if (isActive(user)) {
-                                    authenticateRequest(request, user.getId(), user.getRole());
+                                    String effectiveRole = (user.getRole() != null && !user.getRole().isBlank())
+                                            ? user.getRole()
+                                            : jwtService.extractRole(token);
+                                    authenticateRequest(request, user.getId(), effectiveRole);
                                 }
                             },
                             () -> {
@@ -62,7 +65,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private boolean isActive(User user) {
-        return user.getAccountStatus() == null || !"SUSPENDED".equalsIgnoreCase(user.getAccountStatus());
+        String status = user.getAccountStatus();
+        return status == null
+                || (!"SUSPENDED".equalsIgnoreCase(status) && !"DEACTIVATED".equalsIgnoreCase(status));
     }
 
     private void authenticateRequest(HttpServletRequest request, String principalId, String role) {
