@@ -48,26 +48,8 @@ public class ContactServiceTest {
     }
 
     @Test
-    void testCreateContact_UserExists_VerifiedStatus() {
-        when(userRepository.existsByEmail("tranthib@email.com")).thenReturn(true);
-        when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> {
-            Contact c = invocation.getArgument(0);
-            c.setContactId("contact-uuid-1");
-            return c;
-        });
-
-        ContactResponse response = contactService.createContact("owner-123", request);
-
-        assertNotNull(response);
-        assertEquals("verified", response.getStatus());
-        assertTrue(response.getIsBeneficiary());
-        assertFalse(response.getIsExecutor());
-        verify(emailService, never()).sendInvitationEmail(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    void testCreateContact_UserNotExists_PendingStatus_SendsEmail() {
-        when(userRepository.existsByEmail("tranthib@email.com")).thenReturn(false);
+    void testCreateContact_StartsAsPendingAndSendsInvitationEmail() {
+        when(contactRepository.existsByOwnerIdAndEmailIgnoreCase("owner-123", "tranthib@email.com")).thenReturn(false);
         when(userRepository.findById("owner-123")).thenReturn(Optional.empty());
         when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> {
             Contact c = invocation.getArgument(0);
@@ -79,7 +61,69 @@ public class ContactServiceTest {
 
         assertNotNull(response);
         assertEquals("pending", response.getStatus());
-        verify(emailService, times(1)).sendInvitationEmail(eq("tranthib@email.com"), eq("Tran Thi B"), anyString());
+        assertTrue(response.getIsBeneficiary());
+        assertFalse(response.getIsExecutor());
+        verify(emailService, times(1)).sendContactInvitationEmail(
+                eq("tranthib@email.com"),
+                eq("Tran Thi B"),
+                anyString(),
+                eq("Spouse"),
+                eq("Beneficiary"),
+                eq("contact-uuid-1")
+        );
+    }
+
+    @Test
+    void testCreateContact_DuplicateEmail_ThrowsException() {
+        when(contactRepository.existsByOwnerIdAndEmailIgnoreCase("owner-123", "tranthib@email.com")).thenReturn(true);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                contactService.createContact("owner-123", request)
+        );
+
+        assertTrue(ex.getMessage().contains("không được trùng email"));
+        verify(contactRepository, never()).save(any());
+    }
+
+    @Test
+    void testRespondToInvitation_AcceptSetsVerified() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "pending");
+        contact.setContactId("contact-uuid-1");
+        when(contactRepository.findById("contact-uuid-1")).thenReturn(Optional.of(contact));
+        when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ContactResponse response = contactService.respondToInvitation("contact-uuid-1", "accept");
+
+        assertEquals("verified", response.getStatus());
+    }
+
+    @Test
+    void testRespondToInvitation_RejectSetsRejected() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "pending");
+        contact.setContactId("contact-uuid-1");
+        when(contactRepository.findById("contact-uuid-1")).thenReturn(Optional.of(contact));
+        when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ContactResponse response = contactService.respondToInvitation("contact-uuid-1", "reject");
+
+        assertEquals("rejected", response.getStatus());
+    }
+
+    @Test
+    void testRespondToInvitation_ThrowsException_WhenRevoked() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "revoked");
+        contact.setContactId("contact-uuid-1");
+        when(contactRepository.findById("contact-uuid-1")).thenReturn(Optional.of(contact));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                contactService.respondToInvitation("contact-uuid-1", "accept")
+        );
+
+        assertTrue(ex.getMessage().contains("đã bị chủ tài sản thu hồi"));
+        verify(contactRepository, never()).save(any());
     }
 
     @Test
@@ -94,5 +138,53 @@ public class ContactServiceTest {
         assertNotNull(list);
         assertEquals(1, list.size());
         assertEquals("Tran Thi B", list.get(0).getFullName());
+    }
+
+    @Test
+    void testRevokeContactInvitation_Success() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "pending");
+        contact.setContactId("contact-uuid-1");
+
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+        when(contactRepository.save(any(Contact.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ContactResponse response = contactService.revokeContactInvitation("owner-123", "contact-uuid-1");
+
+        assertNotNull(response);
+        assertEquals("revoked", response.getStatus());
+        verify(contactRepository, times(1)).save(contact);
+    }
+
+    @Test
+    void testRevokeContactInvitation_ThrowsException_WhenNotPending() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "verified");
+        contact.setContactId("contact-uuid-1");
+
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                contactService.revokeContactInvitation("owner-123", "contact-uuid-1")
+        );
+
+        assertTrue(ex.getMessage().contains("Chỉ có thể thu hồi lời mời liên hệ đang ở trạng thái chờ"));
+        verify(contactRepository, never()).save(any());
+    }
+
+    @Test
+    void testDeleteContact_Success() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "verified");
+        contact.setContactId("contact-uuid-1");
+
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+
+        assertDoesNotThrow(() -> contactService.deleteContact("owner-123", "contact-uuid-1"));
+
+        verify(contactRepository, times(1)).delete(contact);
     }
 }

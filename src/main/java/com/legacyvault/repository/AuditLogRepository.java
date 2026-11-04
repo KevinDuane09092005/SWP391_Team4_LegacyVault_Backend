@@ -18,7 +18,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, String> {
     Optional<AuditLog> findTopByOrderByCreatedAtDesc();
 
     @Query("SELECT a FROM AuditLog a WHERE " +
-           "(:role IS NULL OR :role = 'ALL' OR a.userRole = :role) AND " +
+           "(:role IS NULL OR :role = 'ALL' OR UPPER(a.userRole) = UPPER(:role)) AND " +
            "(:action IS NULL OR :action = 'ALL' OR a.action = :action) AND " +
            "(:search IS NULL OR LOWER(a.target) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.userName) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.action) LIKE LOWER(CONCAT('%', :search, '%'))) AND " +
            "(:fromDate IS NULL OR a.createdAt >= :fromDate) AND " +
@@ -34,4 +34,12 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, String> {
     );
 
     List<AuditLog> findByCreatedAtBetweenOrderByCreatedAtDesc(LocalDateTime from, LocalDateTime to);
+
+    @Query("SELECT a FROM AuditLog a WHERE " +
+            "(:fromDate IS NULL OR a.createdAt >= :fromDate) AND " +
+            "(:toDate IS NULL OR a.createdAt <= :toDate) " +
+            "ORDER BY a.createdAt DESC")
+    List<AuditLog> findLogsForExport(
+            @Param("fromDate") LocalDateTime fromDate,
+            @Param("toDate") LocalDateTime toDate);
 }

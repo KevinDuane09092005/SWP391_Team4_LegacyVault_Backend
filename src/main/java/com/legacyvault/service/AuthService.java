@@ -77,6 +77,10 @@ public class AuthService {
         if (!user.getIsVerified()) {
             throw new RuntimeException("User not verified. Please verify OTP first.");
         }
+
+        if ("SUSPENDED".equalsIgnoreCase(user.getAccountStatus())) {
+            throw new RuntimeException("Account is suspended. Contact support for assistance.");
+        }
         
         return user;
     }

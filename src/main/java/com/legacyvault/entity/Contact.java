@@ -26,7 +26,7 @@ public class Contact {
     @Column(name = "email", nullable = false, length = 150)
     private String email;
 
-    @Column(name = "phone_number", length = 20)
+    @Transient
     private String phoneNumber;
 
     @Column(name = "is_beneficiary")

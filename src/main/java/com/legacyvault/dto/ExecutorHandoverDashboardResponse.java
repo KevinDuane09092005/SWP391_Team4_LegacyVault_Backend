@@ -1,6 +1,7 @@
 package com.legacyvault.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.ArrayList;
 import java.util.List;
 
 public class ExecutorHandoverDashboardResponse {
@@ -89,6 +90,37 @@ public class ExecutorHandoverDashboardResponse {
         }
     }
 
+    public static class BeneficiaryItem {
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("email")
+        private String email;
+
+        public BeneficiaryItem() {}
+
+        public BeneficiaryItem(String name, String email) {
+            this.name = name;
+            this.email = email;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getEmail() {
+            return email;
+        }
+
+        public void setEmail(String email) {
+            this.email = email;
+        }
+    }
+
     public static class HandoverCaseTableRow {
         @JsonProperty("case_id")
         private String caseId;
@@ -101,6 +133,12 @@ public class ExecutorHandoverDashboardResponse {
 
         @JsonProperty("beneficiary")
         private String beneficiary;
+
+        @JsonProperty("beneficiary_email")
+        private String beneficiaryEmail;
+
+        @JsonProperty("beneficiaries")
+        private List<BeneficiaryItem> beneficiaries = new ArrayList<>();
 
         @JsonProperty("legal_verification_status")
         private String legalVerificationStatus;
@@ -158,6 +196,22 @@ public class ExecutorHandoverDashboardResponse {
 
         public void setBeneficiary(String beneficiary) {
             this.beneficiary = beneficiary;
+        }
+
+        public String getBeneficiaryEmail() {
+            return beneficiaryEmail;
+        }
+
+        public void setBeneficiaryEmail(String beneficiaryEmail) {
+            this.beneficiaryEmail = beneficiaryEmail;
+        }
+
+        public List<BeneficiaryItem> getBeneficiaries() {
+            return beneficiaries;
+        }
+
+        public void setBeneficiaries(List<BeneficiaryItem> beneficiaries) {
+            this.beneficiaries = beneficiaries;
         }
 
         public String getLegalVerificationStatus() {

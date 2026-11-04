@@ -59,12 +59,13 @@ public class AssignmentService {
         // Validate Executor contact
         Contact executor = contactRepository.findByContactIdAndOwnerId(request.getExecutorContactId(), ownerId)
                 .orElseThrow(() -> new IllegalArgumentException("Executor contact not found or access denied"));
+        ensureContactIsVerified(executor, "Người thi hành");
 
         // Validate Beneficiaries contacts
         for (String beneficiaryId : request.getBeneficiaryContactIds()) {
-            if (!contactRepository.existsByContactIdAndOwnerId(beneficiaryId, ownerId)) {
-                throw new IllegalArgumentException("Beneficiary contact not found: " + beneficiaryId);
-            }
+            Contact beneficiary = contactRepository.findByContactIdAndOwnerId(beneficiaryId, ownerId)
+                    .orElseThrow(() -> new IllegalArgumentException("Beneficiary contact not found: " + beneficiaryId));
+            ensureContactIsVerified(beneficiary, "Người thụ hưởng");
         }
 
         return Map.of(
@@ -232,12 +233,13 @@ public class AssignmentService {
         // 3. Validate Executor contact
         Contact executor = contactRepository.findByContactIdAndOwnerId(request.getExecutorContactId(), ownerId)
                 .orElseThrow(() -> new IllegalArgumentException("Executor contact not found or access denied"));
+        ensureContactIsVerified(executor, "Người thi hành");
 
         // 4. Validate Beneficiary contacts
         for (String beneficiaryId : request.getBeneficiaryContactIds()) {
-            if (!contactRepository.existsByContactIdAndOwnerId(beneficiaryId, ownerId)) {
-                throw new IllegalArgumentException("Beneficiary contact not found: " + beneficiaryId);
-            }
+            Contact beneficiary = contactRepository.findByContactIdAndOwnerId(beneficiaryId, ownerId)
+                    .orElseThrow(() -> new IllegalArgumentException("Beneficiary contact not found: " + beneficiaryId));
+            ensureContactIsVerified(beneficiary, "Người thụ hưởng");
         }
 
         // 5. Update Assignment details
@@ -284,5 +286,20 @@ public class AssignmentService {
                 savedAssignment.getCreatedAt(),
                 savedAssignment.getUpdatedAt()
         );
+    }
+
+    private void ensureContactIsVerified(Contact contact, String roleLabel) {
+        String status = contact.getStatus() != null ? contact.getStatus().trim().toLowerCase() : "pending";
+        if (!"verified".equals(status)) {
+            String name = contact.getFullName() != null ? contact.getFullName() : "Contact";
+            if ("rejected".equals(status) || "declined".equals(status)) {
+                throw new IllegalArgumentException(
+                        roleLabel + " \"" + name + "\" đã từ chối lời mời (Declined). Vui lòng chờ người liên hệ đồng ý thì bạn mới được gán."
+                );
+            }
+            throw new IllegalArgumentException(
+                    roleLabel + " \"" + name + "\" đang ở trạng thái chờ xác nhận (Pending). Vui lòng chờ người liên hệ đồng ý thì bạn mới được gán."
+            );
+        }
     }
 }

@@ -128,4 +128,27 @@ public class DmsSchedulerServiceTest {
         verify(dmsRepository, never()).save(testDms);
         verify(emailService, never()).sendDmsWarningEmail(any(), any(), anyInt());
     }
+
+    @Test
+    void testEvaluate_TestingMode120sGracePeriod_SendsEmailWhenNearExpiration() {
+        LocalDateTime now = LocalDateTime.now();
+        testDms.setCheckInIntervalSeconds(60);
+        testDms.setGracePeriodSeconds(120);
+        // Just entered Grace Period (10s past due, 110s remaining in Grace Period)
+        testDms.setNextCheckInAt(now.minusSeconds(10));
+        testDms.setStatus("due_soon");
+
+        schedulerService.evaluateSingleDms(testDms, now);
+
+        assertEquals("grace_period", testDms.getStatus());
+        verify(emailService, never()).sendDmsGracePeriodEmail(any(), any(), any(), anyInt(), anyBoolean());
+
+        // Now Grace Period is nearly over (100s past due, 20s remaining <= 30s threshold)
+        when(userRepository.findById("owner-1")).thenReturn(Optional.of(testOwner));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-1")).thenReturn(List.of(testExecutor));
+
+        schedulerService.evaluateSingleDms(testDms, now.plusSeconds(90));
+
+        verify(emailService, times(1)).sendDmsGracePeriodEmail(eq("thanh@example.com"), eq("Thanh Pham"), eq("Thanh Pham"), eq(0), eq(true));
+    }
 }

@@ -38,6 +38,9 @@ public class VerificationDocument {
     @Column(name = "file_hash_sha256", nullable = false, length = 64)
     private String fileHashSha256;
 
+    @Column(name = "storage_path", length = 500)
+    private String storagePath;
+
     @Column(name = "uploaded_at")
     private LocalDateTime uploadedAt;
 
@@ -132,6 +135,14 @@ public class VerificationDocument {
 
     public void setFileHashSha256(String fileHashSha256) {
         this.fileHashSha256 = fileHashSha256;
+    }
+
+    public String getStoragePath() {
+        return storagePath;
+    }
+
+    public void setStoragePath(String storagePath) {
+        this.storagePath = storagePath;
     }
 
     public LocalDateTime getUploadedAt() {

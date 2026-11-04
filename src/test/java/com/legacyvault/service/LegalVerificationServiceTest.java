@@ -19,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -42,6 +43,12 @@ public class LegalVerificationServiceTest {
 
     @Mock
     private ContactRepository contactRepository;
+
+    @Mock
+    private EmailService emailService;
+
+    @Mock
+    private FileStorageService fileStorageService;
 
     @InjectMocks
     private LegalVerificationService legalVerificationService;
@@ -186,14 +193,61 @@ public class LegalVerificationServiceTest {
                 "Sample PDF content for death certificate test".getBytes()
         );
 
+        StoredFileInfo mockStored = new StoredFileInfo(
+                "uuid-123_death_cert.pdf",
+                "death_cert.pdf",
+                "verification-documents/LV-1042/uuid-123_death_cert.pdf",
+                file.getSize(),
+                "application/pdf",
+                "mock-sha256-hash"
+        );
+        when(fileStorageService.storeFile(eq(file), eq("verification-documents/LV-1042"))).thenReturn(mockStored);
+
         VerificationDocumentResponse response = legalVerificationService.uploadDocument(
                 "case-uuid-1042", file, "DEATH_CERTIFICATE", "GCT-1234", "UBND Phường", LocalDate.of(2026, 10, 10));
 
         assertNotNull(response);
         assertEquals("death_cert.pdf", response.getFileName());
         assertEquals("DEATH_CERTIFICATE", response.getDocumentType());
-        assertNotNull(response.getFileHashSha256());
+        assertEquals("mock-sha256-hash", response.getFileHashSha256());
+        assertNotNull(response.getDocumentId());
+        assertTrue(response.getFileUrl().contains(response.getDocumentId()));
         verify(verificationDocumentRepository, times(1)).save(any(VerificationDocument.class));
+        verify(fileStorageService, times(1)).storeFile(eq(file), eq("verification-documents/LV-1042"));
+    }
+
+    @Test
+    void testUploadDocument_EmptyFile() {
+        MockMultipartFile emptyFile = new MockMultipartFile("file", "empty.pdf", "application/pdf", new byte[0]);
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(testCase));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                legalVerificationService.uploadDocument("case-uuid-1042", emptyFile, "DEATH_CERTIFICATE", null, null, null));
+    }
+
+    @Test
+    void testGetDocumentResource_Success() throws IOException {
+        when(verificationDocumentRepository.findById("doc-uuid-1")).thenReturn(Optional.of(testDoc));
+        testDoc.setStoragePath("verification-documents/LV-1042/doc.pdf");
+        testDoc.setFileName("doc.pdf");
+
+        org.springframework.core.io.ByteArrayResource resource =
+                new org.springframework.core.io.ByteArrayResource("test".getBytes());
+        when(fileStorageService.loadFileAsResource("verification-documents/LV-1042/doc.pdf")).thenReturn(resource);
+
+        LegalVerificationService.DocumentResourceInfo info = legalVerificationService.getDocumentResource("doc-uuid-1");
+        assertNotNull(info);
+        assertEquals("doc.pdf", info.getFileName());
+        assertEquals("application/pdf", info.getContentType());
+        assertEquals(resource, info.getResource());
+    }
+
+    @Test
+    void testGetDocumentResource_NotFound() {
+        when(verificationDocumentRepository.findById("non-existent")).thenReturn(Optional.empty());
+
+        assertThrows(NoSuchElementException.class, () ->
+                legalVerificationService.getDocumentResource("non-existent"));
     }
 
     @Test

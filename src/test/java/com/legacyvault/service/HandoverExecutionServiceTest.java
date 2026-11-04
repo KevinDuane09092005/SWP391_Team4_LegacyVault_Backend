@@ -47,6 +47,9 @@ class HandoverExecutionServiceTest {
     @Mock
     private EmailService emailService;
 
+    @Mock
+    private EncryptionService encryptionService;
+
     @InjectMocks
     private HandoverExecutionService handoverExecutionService;
 

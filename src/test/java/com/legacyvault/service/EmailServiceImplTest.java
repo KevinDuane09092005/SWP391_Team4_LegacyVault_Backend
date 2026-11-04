@@ -49,4 +49,30 @@ public class EmailServiceImplTest {
         assertDoesNotThrow(() -> emailService.sendOtpEmail("user@example.com", "654321"));
         verify(mailSender, times(1)).send(any(SimpleMailMessage.class));
     }
+
+    @Test
+    void testSendDmsWarningEmail_TestingMode_ContainsDmsLinkAndNoRemainingTime() {
+        emailService.sendDmsWarningEmail("owner@example.com", "Thanh Pham", 0);
+
+        ArgumentCaptor<SimpleMailMessage> captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, times(1)).send(captor.capture());
+
+        SimpleMailMessage msg = captor.getValue();
+        String text = Objects.requireNonNull(msg.getText());
+        assertTrue(text.contains("http://localhost:5173/dashboard/owner/dms"));
+        assertFalse(text.contains("còn khoảng"));
+    }
+
+    @Test
+    void testSendDmsGracePeriodEmail_TestingMode_ContainsDmsLinkAndNoRemainingTime() {
+        emailService.sendDmsGracePeriodEmail("owner@example.com", "Thanh Pham", "Thanh Pham", 0, true);
+
+        ArgumentCaptor<SimpleMailMessage> captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, times(1)).send(captor.capture());
+
+        SimpleMailMessage msg = captor.getValue();
+        String text = Objects.requireNonNull(msg.getText());
+        assertTrue(text.contains("http://localhost:5173/dashboard/owner/dms"));
+        assertFalse(text.contains("còn khoảng"));
+    }
 }

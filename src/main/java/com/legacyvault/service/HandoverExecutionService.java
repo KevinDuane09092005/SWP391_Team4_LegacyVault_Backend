@@ -28,15 +28,17 @@ public class HandoverExecutionService {
     private final AssignmentBeneficiaryRepository assignmentBeneficiaryRepository;
     private final BeneficiaryClaimSessionRepository claimSessionRepository;
     private final EmailService emailService;
+    private final EncryptionService encryptionService;
 
     public HandoverExecutionService(HandoverCaseRepository handoverCaseRepository,
-                                  UserRepository userRepository,
-                                  ContactRepository contactRepository,
-                                  AssetRepository assetRepository,
-                                  AssetAssignmentRepository assetAssignmentRepository,
-                                  AssignmentBeneficiaryRepository assignmentBeneficiaryRepository,
-                                  BeneficiaryClaimSessionRepository claimSessionRepository,
-                                  EmailService emailService) {
+            UserRepository userRepository,
+            ContactRepository contactRepository,
+            AssetRepository assetRepository,
+            AssetAssignmentRepository assetAssignmentRepository,
+            AssignmentBeneficiaryRepository assignmentBeneficiaryRepository,
+            BeneficiaryClaimSessionRepository claimSessionRepository,
+            EmailService emailService,
+            EncryptionService encryptionService) {
         this.handoverCaseRepository = handoverCaseRepository;
         this.userRepository = userRepository;
         this.contactRepository = contactRepository;
@@ -45,10 +47,12 @@ public class HandoverExecutionService {
         this.assignmentBeneficiaryRepository = assignmentBeneficiaryRepository;
         this.claimSessionRepository = claimSessionRepository;
         this.emailService = emailService;
+        this.encryptionService = encryptionService;
     }
 
     public static String sha256Hex(String input) {
-        if (input == null) return null;
+        if (input == null)
+            return null;
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
@@ -75,64 +79,83 @@ public class HandoverExecutionService {
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.ENGLISH);
 
         for (HandoverCase c : allCases) {
-            String status = c.getStatus() != null ? c.getStatus().toUpperCase() : "INITIATED";
-            if (status.contains("PENDING") || status.contains("SUBMITTED") || status.contains("UNDER_REVIEW")) {
+            String rawStatus = c.getStatus() != null ? c.getStatus().toUpperCase() : "INITIATED";
+
+            String legalStatus;
+            String handoverStatus;
+
+            if (rawStatus.equals("APPROVED")) {
+                legalStatus = "APPROVED";
+                handoverStatus = "APPROVED";
+            } else if (rawStatus.contains("PROGRESS") || rawStatus.contains("RELEASED")
+                    || "CLEARANCE_GRANTED".equalsIgnoreCase(c.getClearanceStatus())) {
+                legalStatus = "APPROVED";
+                handoverStatus = "IN PROGRESS";
+            } else if (rawStatus.contains("COMPLETED")) {
+                legalStatus = "APPROVED";
+                handoverStatus = "COMPLETED";
+            } else if (rawStatus.contains("REJECTED")) {
+                legalStatus = "REJECTED";
+                handoverStatus = "REJECTED";
+            } else if (rawStatus.contains("SUBMITTED") || rawStatus.contains("UNDER_REVIEW")) {
+                legalStatus = "UNDER_REVIEW";
+                handoverStatus = "PENDING_LEGAL_APPROVAL";
+            } else {
+                // "INITIATED" or pending initial review
+                legalStatus = "PENDING";
+                handoverStatus = "PENDING_LEGAL_APPROVAL";
+            }
+
+            if (legalStatus.equals("PENDING") || legalStatus.equals("UNDER_REVIEW")) {
                 pendingApproval++;
-            } else if (status.contains("PROGRESS") || status.contains("RELEASED")) {
+            } else if (handoverStatus.equals("IN PROGRESS") || handoverStatus.equals("APPROVED")) {
                 inProgress++;
-            } else if (status.contains("COMPLETED")) {
+            } else if (handoverStatus.equals("COMPLETED")) {
                 completed++;
             }
 
             User owner = userRepository.findById(c.getOwnerId()).orElse(null);
             String ownerName = owner != null ? owner.getFullName() : "Vault Owner";
 
-            // Find primary beneficiary
-            String beneficiaryName = "Linh Pham";
-            List<Contact> contacts = contactRepository.findByOwnerId(c.getOwnerId());
-            for (Contact contact : contacts) {
-                if (Boolean.TRUE.equals(contact.getIsBeneficiary())) {
-                    beneficiaryName = contact.getFullName();
-                    break;
-                }
+            // Find all beneficiaries for this owner
+            List<Contact> beneficiaryContacts = contactRepository.findByOwnerId(c.getOwnerId()).stream()
+                    .filter(contact -> Boolean.TRUE.equals(contact.getIsBeneficiary()))
+                    .collect(Collectors.toList());
+
+            List<ExecutorHandoverDashboardResponse.BeneficiaryItem> beneficiaryItems = beneficiaryContacts.stream()
+                    .map(b -> new ExecutorHandoverDashboardResponse.BeneficiaryItem(b.getFullName(), b.getEmail()))
+                    .collect(Collectors.toList());
+
+            String beneficiaryNames = beneficiaryContacts.stream()
+                    .map(Contact::getFullName)
+                    .collect(Collectors.joining(", "));
+            if (beneficiaryNames.isEmpty()) {
+                beneficiaryNames = "Beneficiary";
             }
+            String primaryEmail = !beneficiaryContacts.isEmpty() ? beneficiaryContacts.get(0).getEmail() : "";
 
             String updatedDate = c.getVerifiedAt() != null ? c.getVerifiedAt().format(dtf)
                     : (c.getTriggeredAt() != null ? c.getTriggeredAt().format(dtf) : "Oct 24, 2026");
 
-            String legalStatus = "APPROVED";
-            if (status.contains("SUBMITTED") || status.contains("UNDER_REVIEW")) {
-                legalStatus = "UNDER_REVIEW";
-            } else if (status.contains("PENDING")) {
-                legalStatus = "PENDING";
-            }
-
-            String handoverStatus = "IN PROGRESS";
-            if (status.contains("COMPLETED")) {
-                handoverStatus = "COMPLETED";
-            } else if (legalStatus.equals("PENDING") || legalStatus.equals("UNDER_REVIEW")) {
-                handoverStatus = "PENDING APPROVAL";
-            }
-
-            rows.add(new ExecutorHandoverDashboardResponse.HandoverCaseTableRow(
+            ExecutorHandoverDashboardResponse.HandoverCaseTableRow row = new ExecutorHandoverDashboardResponse.HandoverCaseTableRow(
                     c.getCaseId(),
                     c.getCaseNumber(),
                     ownerName,
-                    beneficiaryName,
+                    beneficiaryNames,
                     legalStatus,
                     handoverStatus,
                     updatedDate,
-                    "MANAGE_HANDOVER"
-            ));
+                    "MANAGE_HANDOVER");
+            row.setBeneficiaryEmail(primaryEmail);
+            row.setBeneficiaries(beneficiaryItems);
+            rows.add(row);
         }
 
-        ExecutorHandoverDashboardResponse.DashboardMetrics metrics =
-                new ExecutorHandoverDashboardResponse.DashboardMetrics(
-                        total > 0 ? total : 8,
-                        pendingApproval > 0 ? pendingApproval : 2,
-                        inProgress > 0 ? inProgress : 1,
-                        completed > 0 ? completed : 5
-                );
+        ExecutorHandoverDashboardResponse.DashboardMetrics metrics = new ExecutorHandoverDashboardResponse.DashboardMetrics(
+                total > 0 ? total : 0,
+                pendingApproval,
+                inProgress,
+                completed);
 
         return new ExecutorHandoverDashboardResponse(metrics, rows);
     }
@@ -142,37 +165,62 @@ public class HandoverExecutionService {
         HandoverCase c = findCaseByIdentifier(caseIdentifier);
 
         User owner = userRepository.findById(c.getOwnerId()).orElse(null);
-        String ownerName = owner != null ? owner.getFullName() : "Thanh Pham";
-        String ownerEmail = owner != null ? owner.getEmail() : "thanh.pham@vault-owner.com";
+        String ownerName = owner != null ? owner.getFullName() : "";
+        String ownerEmail = owner != null ? owner.getEmail() : "";
 
         // Beneficiary info
-        String beneficiaryName = "Linh Pham";
-        String beneficiaryEmail = "linh.pham@beneficiary.com";
-        List<Contact> contacts = contactRepository.findByOwnerId(c.getOwnerId());
-        for (Contact contact : contacts) {
-            if (Boolean.TRUE.equals(contact.getIsBeneficiary())) {
-                beneficiaryName = contact.getFullName();
-                beneficiaryEmail = contact.getEmail();
-                break;
-            }
-        }
+        List<Contact> bContacts = contactRepository.findByOwnerId(c.getOwnerId()).stream()
+                .filter(contact -> Boolean.TRUE.equals(contact.getIsBeneficiary()))
+                .collect(Collectors.toList());
+
+        String beneficiaryName = bContacts.stream().map(Contact::getFullName).collect(Collectors.joining(", "));
+        if (beneficiaryName.isEmpty())
+            beneficiaryName = "";
+        String beneficiaryEmail = !bContacts.isEmpty() ? bContacts.get(0).getEmail() : "";
 
         // Assets
         List<Asset> assets = assetRepository.findByOwnerId(c.getOwnerId());
+        if (assets.isEmpty()) {
+            assets = assetRepository.findAll();
+        }
         List<HandoverDetailsResponse.HandoverAssetItem> assetItems = new ArrayList<>();
         if (assets.isEmpty()) {
-            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("Primary Vault Ledger Key", "Credentials", "Legal Verification", "AUTHORIZED & LOCKED"));
-            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("Family Inheritance Instructions.pdf", "Documents", "Automatic Release", "AUTHORIZED & LOCKED"));
-            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("Real Estate Deeds & Trust Assets", "Property Deeds", "Court Decrees", "LOCKED / RESTRICTED"));
+            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("asset-default-1", "Primary Vault Ledger Key",
+                    "Credentials", "Secure digital key", null, null, "Legal Verification", "AUTHORIZED & LOCKED"));
+            assetItems.add(new HandoverDetailsResponse.HandoverAssetItem("asset-default-2",
+                    "Family Inheritance Instructions.pdf", "Documents", "Legal estate documents", null, null,
+                    "Automatic Release", "AUTHORIZED & LOCKED"));
         } else {
             for (Asset a : assets) {
+                String decrypted = null;
+                if (a.getEncryptedCredentials() != null && !a.getEncryptedCredentials().isEmpty()) {
+                    try {
+                        decrypted = encryptionService.decrypt(a.getEncryptedCredentials());
+                    } catch (Exception e) {
+                        logger.warn("Could not decrypt asset credentials {}: {}", a.getAssetId(), e.getMessage());
+                    }
+                }
                 assetItems.add(new HandoverDetailsResponse.HandoverAssetItem(
+                        a.getAssetId(),
                         a.getAssetName(),
                         a.getAssetType() != null ? a.getAssetType() : "General Asset",
+                        a.getDescription(),
+                        decrypted,
+                        a.getAttachmentUrl(),
                         "Legal Verification",
-                        "AUTHORIZED & LOCKED"
-                ));
+                        "RELEASED".equalsIgnoreCase(c.getStatus()) ? "AUTHORIZED" : "AUTHORIZED & LOCKED"));
             }
+        }
+
+        String rawStatus = c.getStatus() != null ? c.getStatus().toUpperCase() : "INITIATED";
+        String detailLegalStatus = "PENDING";
+        if (rawStatus.equals("APPROVED") || rawStatus.contains("PROGRESS") || rawStatus.contains("RELEASED")
+                || rawStatus.contains("COMPLETED")) {
+            detailLegalStatus = "APPROVED";
+        } else if (rawStatus.contains("SUBMITTED") || rawStatus.contains("UNDER_REVIEW")) {
+            detailLegalStatus = "UNDER_REVIEW";
+        } else if (rawStatus.contains("REJECTED")) {
+            detailLegalStatus = "REJECTED";
         }
 
         return new HandoverDetailsResponse(
@@ -181,11 +229,11 @@ public class HandoverExecutionService {
                 new HandoverDetailsResponse.VaultOwnerSummary(ownerName, ownerEmail, "DECEASED/INACTIVE"),
                 new HandoverDetailsResponse.BeneficiarySummary(beneficiaryName, beneficiaryEmail),
                 new HandoverDetailsResponse.LegalVerificationSummary(
-                        "APPROVED",
-                        c.getLegalVerificationSummary() != null ? c.getLegalVerificationSummary() : "Certified Court Order Verified"
-                ),
-                assetItems
-        );
+                        detailLegalStatus,
+                        c.getLegalVerificationSummary() != null ? c.getLegalVerificationSummary()
+                                : (detailLegalStatus.equals("APPROVED") ? "Certified Court Order Verified"
+                                        : "Pending Legal Verification")),
+                assetItems);
     }
 
     @Transactional
@@ -193,60 +241,90 @@ public class HandoverExecutionService {
         HandoverCase c = findCaseByIdentifier(caseIdentifier);
 
         String currentStatus = c.getStatus() != null ? c.getStatus().toUpperCase() : "";
-        if (!currentStatus.equals("APPROVED") && !currentStatus.equals("UNDER_REVIEW") && !currentStatus.equals("IN PROGRESS")) {
-            throw new IllegalStateException("Cannot start handover release: Case legal verification is not APPROVED yet. Current status: " + c.getStatus());
+        if (!currentStatus.equals("APPROVED") && !currentStatus.equals("UNDER_REVIEW")
+                && !currentStatus.equals("IN PROGRESS")) {
+            throw new IllegalStateException(
+                    "Cannot start handover release: Case legal verification is not APPROVED yet. Current status: "
+                            + c.getStatus());
         }
 
         String accessCode = c.getCaseNumber() + "-HANDOVER-SECURE";
         String accessCodeHash = sha256Hex(accessCode);
 
-        // Find primary beneficiary
-        Contact beneficiary = null;
-        List<Contact> contacts = contactRepository.findByOwnerId(c.getOwnerId());
-        for (Contact contact : contacts) {
-            if (Boolean.TRUE.equals(contact.getIsBeneficiary())) {
-                beneficiary = contact;
-                break;
-            }
-        }
-
-        String beneficiaryId = beneficiary != null ? beneficiary.getContactId() : UUID.randomUUID().toString();
-        String beneficiaryEmail = beneficiary != null ? beneficiary.getEmail() : "linh.pham@beneficiary.com";
-        String beneficiaryName = beneficiary != null ? beneficiary.getFullName() : "Linh Pham";
+        // Find all beneficiaries for this owner
+        List<Contact> beneficiaryContacts = contactRepository.findByOwnerId(c.getOwnerId()).stream()
+                .filter(contact -> Boolean.TRUE.equals(contact.getIsBeneficiary()))
+                .collect(Collectors.toList());
 
         User owner = userRepository.findById(c.getOwnerId()).orElse(null);
-        String ownerName = owner != null ? owner.getFullName() : "Thanh Pham";
+        String ownerName = owner != null ? owner.getFullName() : "Vault Owner";
 
-        // Create or update BeneficiaryClaimSession
-        BeneficiaryClaimSession session = claimSessionRepository.findByCaseIdAndBeneficiaryContactId(c.getCaseId(), beneficiaryId)
-                .orElse(new BeneficiaryClaimSession());
+        List<String> notifiedEmails = new ArrayList<>();
 
-        session.setCaseId(c.getCaseId());
-        session.setBeneficiaryContactId(beneficiaryId);
-        session.setAccessCodeHash(accessCodeHash);
-        session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
-        session.setOtpCodeHash(sha256Hex("482916")); // Default test OTP matching prototype Screen 5
-        session.setOtpExpiresAt(LocalDateTime.now().plusMinutes(15));
-        session.setTokenStatus("ACTIVE");
-        session.setKycPhotoIdStatus("VERIFIED");
-        session.setKycFacialStatus("PENDING_SCAN");
-        session.setIdentityVerified(false);
-        claimSessionRepository.save(session);
+        if (beneficiaryContacts.isEmpty()) {
+            String defaultBeneficiaryId = UUID.randomUUID().toString();
+            String defaultEmail = "linh.pham@beneficiary.com";
+            BeneficiaryClaimSession session = claimSessionRepository
+                    .findByCaseIdAndBeneficiaryContactId(c.getCaseId(), defaultBeneficiaryId)
+                    .orElse(new BeneficiaryClaimSession());
+            session.setCaseId(c.getCaseId());
+            session.setBeneficiaryContactId(defaultBeneficiaryId);
+            session.setAccessCodeHash(accessCodeHash);
+            session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
+            session.setOtpCodeHash(sha256Hex("482916"));
+            session.setOtpExpiresAt(LocalDateTime.now().plusMinutes(15));
+            session.setTokenStatus("ACTIVE");
+            session.setKycPhotoIdStatus("VERIFIED");
+            session.setKycFacialStatus("PENDING_SCAN");
+            session.setIdentityVerified(false);
+            claimSessionRepository.save(session);
+            notifiedEmails.add(defaultEmail);
+        } else {
+            for (Contact beneficiary : beneficiaryContacts) {
+                String beneficiaryId = beneficiary.getContactId();
+                String beneficiaryEmail = beneficiary.getEmail();
+                String beneficiaryName = beneficiary.getFullName();
+
+                BeneficiaryClaimSession session = claimSessionRepository
+                        .findByCaseIdAndBeneficiaryContactId(c.getCaseId(), beneficiaryId)
+                        .orElse(new BeneficiaryClaimSession());
+
+                session.setCaseId(c.getCaseId());
+                session.setBeneficiaryContactId(beneficiaryId);
+                session.setAccessCodeHash(accessCodeHash);
+                session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
+                session.setOtpCodeHash(sha256Hex("482916"));
+                session.setOtpExpiresAt(LocalDateTime.now().plusMinutes(15));
+                session.setTokenStatus("ACTIVE");
+                session.setKycPhotoIdStatus("VERIFIED");
+                session.setKycFacialStatus("PENDING_SCAN");
+                session.setIdentityVerified(false);
+                claimSessionRepository.save(session);
+
+                try {
+                    emailService.sendHandoverAccessCodeEmail(beneficiaryEmail, beneficiaryName, ownerName,
+                            c.getCaseNumber(), accessCode);
+                    notifiedEmails.add(beneficiaryEmail);
+                } catch (Exception e) {
+                    logger.warn("Failed to send handover access code email to {}: {}", beneficiaryEmail,
+                            e.getMessage());
+                }
+            }
+        }
 
         c.setStatus("IN PROGRESS");
         c.setClearanceStatus("CLEARANCE_GRANTED");
         c.setAuthorizedByExecutor(executorUserId != null ? executorUserId : "Minh Le (Executor)");
         handoverCaseRepository.save(c);
 
-        emailService.sendHandoverAccessCodeEmail(beneficiaryEmail, beneficiaryName, ownerName, c.getCaseNumber(), accessCode);
-        logger.info("Started Handover Release for case={} accessCode={}", c.getCaseNumber(), accessCode);
+        logger.info("Started Handover Release for case={} accessCode={} recipients={}", c.getCaseNumber(), accessCode,
+                notifiedEmails);
 
         return new StartReleaseResponse(
                 c.getCaseNumber(),
                 "IN PROGRESS",
                 accessCode,
-                beneficiaryEmail
-        );
+                String.join(", ", notifiedEmails));
     }
 
     @Transactional(readOnly = true)
@@ -266,24 +344,27 @@ public class HandoverExecutionService {
         }
 
         List<AuthorizationEvaluationResponse.AssetVerdictItem> verdicts = new ArrayList<>();
-        verdicts.add(new AuthorizationEvaluationResponse.AssetVerdictItem("Primary Vault Ledger Key", "Credentials", "AUTHORIZED FOR RELEASE"));
-        verdicts.add(new AuthorizationEvaluationResponse.AssetVerdictItem("Family Inheritance Instructions.pdf", "Documents", "AUTHORIZED FOR RELEASE"));
-        verdicts.add(new AuthorizationEvaluationResponse.AssetVerdictItem("Real Estate Deeds & Trust Assets", "Property Deeds", "LOCKED / RESTRICTED"));
+        verdicts.add(new AuthorizationEvaluationResponse.AssetVerdictItem("Primary Vault Ledger Key", "Credentials",
+                "AUTHORIZED FOR RELEASE"));
+        verdicts.add(new AuthorizationEvaluationResponse.AssetVerdictItem("Family Inheritance Instructions.pdf",
+                "Documents", "AUTHORIZED FOR RELEASE"));
+        verdicts.add(new AuthorizationEvaluationResponse.AssetVerdictItem("Real Estate Deeds & Trust Assets",
+                "Property Deeds", "LOCKED / RESTRICTED"));
 
         return new AuthorizationEvaluationResponse(
                 "EVALUATING",
                 "Identity verification checks successfully concluded. Evaluating legal releases in accordance with the last will of "
-                        + ownerName + " and validated court orders. Locked/probate-bound assets must remain restricted.",
+                        + ownerName
+                        + " and validated court orders. Locked/probate-bound assets must remain restricted.",
                 new AuthorizationEvaluationResponse.EvaluationChecklist("VERIFIED", "APPROVED", "VERIFIED"),
-                "The system has determined that 2 of 3 listed legacy collections are legally cleared for instant handover release to " + beneficiaryName + ".",
+                "The system has determined that 2 of 3 listed legacy collections are legally cleared for instant handover release to "
+                        + beneficiaryName + ".",
                 verdicts,
                 new AuthorizationEvaluationResponse.ExecutionControlSummary(
                         "Clearance Granted",
                         c.getAuthorizedByExecutor() != null ? c.getAuthorizedByExecutor() : "Minh Le (Executor)",
                         c.getCaseNumber(),
-                        beneficiaryName
-                )
-        );
+                        beneficiaryName));
     }
 
     @Transactional
@@ -312,22 +393,22 @@ public class HandoverExecutionService {
             }
         }
 
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MMM dd, yyyy — HH:mm:ss 'EST'", Locale.ENGLISH);
-        String finalDate = c.getResolvedAt() != null ? c.getResolvedAt().format(dtf) : "Oct 25, 2026 — 14:54:12 EST";
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MMM dd, yyyy - HH:mm:ss 'EST'", Locale.ENGLISH);
+        String finalDate = c.getResolvedAt() != null ? c.getResolvedAt().format(dtf) : "Oct 25, 2026 - 14:54:12 EST";
 
         return new HandoverCompletedResponse(
                 c.getCaseNumber(),
                 "COMPLETED",
                 "Asset Handover Successful",
-                "All legal digital inheritance files for Case " + c.getCaseNumber() + " have been successfully verified, released, and receipted by the beneficiary.",
+                "All legal digital inheritance files for Case " + c.getCaseNumber()
+                        + " have been successfully verified, released, and receipted by the beneficiary.",
                 new HandoverCompletedResponse.EstateDepositionTransReceipt(
                         ownerName,
                         beneficiaryName,
                         c.getAuthorizedByExecutor() != null ? c.getAuthorizedByExecutor() : "Minh Le",
-                        finalDate
-                ),
-                "https://vault-storage.legacyvault.io/receipts/RC-" + c.getCaseNumber() + "-FINAL.pdf?token=valid_receipt_sig"
-        );
+                        finalDate),
+                "https://vault-storage.legacyvault.io/receipts/RC-" + c.getCaseNumber()
+                        + "-FINAL.pdf?token=valid_receipt_sig");
     }
 
     public HandoverCase findCaseByIdentifier(String caseIdentifier) {

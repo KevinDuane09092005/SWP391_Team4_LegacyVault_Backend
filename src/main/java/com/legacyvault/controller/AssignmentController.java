@@ -82,7 +82,7 @@ public class AssignmentController {
         }
     }
 
-    @PutMapping("/asset/{assetId}")
+    @RequestMapping(value = "/asset/{assetId}", method = {RequestMethod.PUT, RequestMethod.POST})
     public ResponseEntity<?> updateAssignmentByAssetId(
             Authentication authentication,
             @PathVariable("assetId") String assetId,

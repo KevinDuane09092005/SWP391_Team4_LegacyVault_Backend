@@ -1,6 +1,11 @@
 spring:
   application:
     name: LegacyVault
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 20MB
+      max-request-size: 25MB
   datasource:
     url: jdbc:mysql://localhost:3306/legacy_vault_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: root
@@ -33,6 +38,10 @@ jwt:
 
 encryption:
   secret-key: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+storage:
+  local:
+    base-dir: uploads
 
 dms:
   scheduler:

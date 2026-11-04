@@ -5,14 +5,20 @@ import com.legacyvault.service.LegalVerificationService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/v1/legal-verification")
@@ -141,6 +147,50 @@ public class LegalVerificationController {
             return ResponseEntity.ok(detail);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Preview document inline (PDF / PNG / JPG) for Frontend iframe or modal
+     */
+    @GetMapping("/documents/{documentId}/view")
+    public ResponseEntity<Resource> viewDocument(@PathVariable String documentId) {
+        try {
+            LegalVerificationService.DocumentResourceInfo docInfo = legalVerificationService.getDocumentResource(documentId);
+            ContentDisposition contentDisposition = ContentDisposition.inline()
+                    .filename(docInfo.getFileName(), StandardCharsets.UTF_8)
+                    .build();
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(docInfo.getContentType()))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition.toString())
+                    .body(docInfo.getResource());
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * Download document as attachment
+     */
+    @GetMapping({"/documents/{documentId}/download", "/documents/download/{documentId}"})
+    public ResponseEntity<Resource> downloadDocument(@PathVariable String documentId) {
+        try {
+            LegalVerificationService.DocumentResourceInfo docInfo = legalVerificationService.getDocumentResource(documentId);
+            ContentDisposition contentDisposition = ContentDisposition.attachment()
+                    .filename(docInfo.getFileName(), StandardCharsets.UTF_8)
+                    .build();
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(docInfo.getContentType()))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition.toString())
+                    .body(docInfo.getResource());
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 }

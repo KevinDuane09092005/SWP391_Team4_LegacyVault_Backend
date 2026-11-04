@@ -62,7 +62,7 @@ public class AssignmentServiceTest {
         testBeneficiary1 = new Contact("owner-1", "Tran Thi B", "Spouse", "tranthib@email.com", "0123", true, false, "verified");
         testBeneficiary1.setContactId("beneficiary-1");
 
-        testBeneficiary2 = new Contact("owner-1", "Nguyen Van C", "Friend", "nguyenc@email.com", "0123", true, false, "pending");
+        testBeneficiary2 = new Contact("owner-1", "Nguyen Van C", "Friend", "nguyenc@email.com", "0123", true, false, "verified");
         testBeneficiary2.setContactId("beneficiary-2");
 
         List<String> beneficiaryIds = List.of("beneficiary-1", "beneficiary-2");
@@ -76,8 +76,8 @@ public class AssignmentServiceTest {
         when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
         when(assignmentRepository.existsByAssetId("asset-1")).thenReturn(false);
         when(contactRepository.findByContactIdAndOwnerId("executor-1", "owner-1")).thenReturn(Optional.of(testExecutor));
-        when(contactRepository.existsByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(true);
-        when(contactRepository.existsByContactIdAndOwnerId("beneficiary-2", "owner-1")).thenReturn(true);
+        when(contactRepository.findByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(Optional.of(testBeneficiary1));
+        when(contactRepository.findByContactIdAndOwnerId("beneficiary-2", "owner-1")).thenReturn(Optional.of(testBeneficiary2));
 
         Map<String, Object> result = assignmentService.validateAssignment("owner-1", validRequest);
 
@@ -86,6 +86,26 @@ public class AssignmentServiceTest {
         assertEquals("MetaMask Wallet (ETH)", result.get("assetName"));
         assertEquals("Le Van D", result.get("executorName"));
         assertEquals(2, result.get("beneficiariesCount"));
+    }
+
+    @Test
+    void testValidateAssignment_UnverifiedContact_ThrowsException() {
+        Contact pendingBeneficiary = new Contact("owner-1", "OGGY", "Child", "oggy@email.com", "0123", true, false, "pending");
+        pendingBeneficiary.setContactId("beneficiary-pending");
+
+        CreateAssignmentRequest pendingRequest = new CreateAssignmentRequest(
+                "asset-1", "executor-1", "Instructions", List.of("beneficiary-pending")
+        );
+
+        when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
+        when(assignmentRepository.existsByAssetId("asset-1")).thenReturn(false);
+        when(contactRepository.findByContactIdAndOwnerId("executor-1", "owner-1")).thenReturn(Optional.of(testExecutor));
+        when(contactRepository.findByContactIdAndOwnerId("beneficiary-pending", "owner-1")).thenReturn(Optional.of(pendingBeneficiary));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                assignmentService.validateAssignment("owner-1", pendingRequest)
+        );
+        assertTrue(ex.getMessage().contains("chờ người liên hệ đồng ý"));
     }
 
     @Test
@@ -106,8 +126,8 @@ public class AssignmentServiceTest {
         when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
         when(assignmentRepository.existsByAssetId("asset-1")).thenReturn(false);
         when(contactRepository.findByContactIdAndOwnerId("executor-1", "owner-1")).thenReturn(Optional.of(testExecutor));
-        when(contactRepository.existsByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(true);
-        when(contactRepository.existsByContactIdAndOwnerId("beneficiary-2", "owner-1")).thenReturn(true);
+        when(contactRepository.findByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(Optional.of(testBeneficiary1));
+        when(contactRepository.findByContactIdAndOwnerId("beneficiary-2", "owner-1")).thenReturn(Optional.of(testBeneficiary2));
 
         when(assignmentRepository.save(any(AssetAssignment.class))).thenAnswer(invocation -> {
             AssetAssignment a = invocation.getArgument(0);
@@ -157,7 +177,7 @@ public class AssignmentServiceTest {
         when(assetRepository.findByAssetIdAndOwnerId("asset-1", "owner-1")).thenReturn(Optional.of(testAsset));
         when(assignmentRepository.findByAssetId("asset-1")).thenReturn(Optional.of(existingAssignment));
         when(contactRepository.findByContactIdAndOwnerId("executor-1", "owner-1")).thenReturn(Optional.of(testExecutor));
-        when(contactRepository.existsByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(true);
+        when(contactRepository.findByContactIdAndOwnerId("beneficiary-1", "owner-1")).thenReturn(Optional.of(testBeneficiary1));
         when(assignmentRepository.save(any(AssetAssignment.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(contactRepository.findById("beneficiary-1")).thenReturn(Optional.of(testBeneficiary1));
 

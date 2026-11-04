@@ -10,6 +10,7 @@ import com.legacyvault.entity.DeadMansSwitch;
 import com.legacyvault.repository.CheckInLogRepository;
 import com.legacyvault.repository.ContactRepository;
 import com.legacyvault.repository.DeadMansSwitchRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,22 +25,46 @@ public class DmsService {
     private final DeadMansSwitchRepository dmsRepository;
     private final CheckInLogRepository checkInLogRepository;
     private final ContactRepository contactRepository;
+    private final DmsSchedulerService dmsSchedulerService;
 
     public DmsService(DeadMansSwitchRepository dmsRepository,
                       CheckInLogRepository checkInLogRepository,
                       ContactRepository contactRepository) {
+        this(dmsRepository, checkInLogRepository, contactRepository, null);
+    }
+
+    @Autowired
+    public DmsService(DeadMansSwitchRepository dmsRepository,
+                      CheckInLogRepository checkInLogRepository,
+                      ContactRepository contactRepository,
+                      DmsSchedulerService dmsSchedulerService) {
         this.dmsRepository = dmsRepository;
         this.checkInLogRepository = checkInLogRepository;
         this.contactRepository = contactRepository;
+        this.dmsSchedulerService = dmsSchedulerService;
     }
 
     @Transactional
     public DmsStatusResponse getDmsStatus(String ownerId) {
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
                 .orElseGet(() -> {
-                    DeadMansSwitch defaultDms = new DeadMansSwitch(ownerId, 30, 50);
+                    DeadMansSwitch defaultDms = new DeadMansSwitch(ownerId, 60, 120);
                     return dmsRepository.save(defaultDms);
                 });
+
+        // Tự động chuyển đổi các bản ghi cấu hình test cũ (30s/50s) sang mặc định kiểm thử mới (60s/120s)
+        if (dms.getCheckInIntervalSeconds() == 30 && dms.getGracePeriodSeconds() == 50) {
+            dms.setCheckInIntervalSeconds(60);
+            dms.setGracePeriodSeconds(120);
+            if (dms.getLastCheckInAt() != null) {
+                dms.setNextCheckInAt(dms.getLastCheckInAt().plusSeconds(60));
+            }
+            dms = dmsRepository.save(dms);
+        }
+
+        if (dmsSchedulerService != null && !"triggered".equalsIgnoreCase(dms.getStatus())) {
+            dmsSchedulerService.evaluateSingleDms(dms, LocalDateTime.now());
+        }
 
         return buildStatusResponse(dms);
     }
@@ -77,7 +102,12 @@ public class DmsService {
     @Transactional
     public CheckInResponse checkIn(String ownerId, String checkInType) {
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
-                .orElseGet(() -> new DeadMansSwitch(ownerId, 30, 50));
+                .orElseGet(() -> new DeadMansSwitch(ownerId, 60, 120));
+
+        if (dms.getCheckInIntervalSeconds() == 30 && dms.getGracePeriodSeconds() == 50) {
+            dms.setCheckInIntervalSeconds(60);
+            dms.setGracePeriodSeconds(120);
+        }
 
         LocalDateTime now = LocalDateTime.now();
         dms.setLastCheckInAt(now);
@@ -129,10 +159,13 @@ public class DmsService {
         String currentStatus = dms.getStatus();
         if (!"triggered".equalsIgnoreCase(currentStatus)) {
             if (nextDue != null && now.isAfter(graceDeadline)) {
-                currentStatus = "grace_period";
+                currentStatus = "triggered";
             } else if (nextDue != null && now.isAfter(nextDue)) {
                 currentStatus = "grace_period";
-            } else if (nextDue != null && now.isAfter(nextDue.minusSeconds(Math.min(10, Math.max(1, dms.getCheckInIntervalSeconds() / 3))))) {
+            } else if (nextDue != null && now.isAfter(nextDue.minusSeconds(
+                    dms.getCheckInIntervalSeconds() < 180
+                            ? Math.min(20, Math.max(10, dms.getCheckInIntervalSeconds() / 3))
+                            : Math.min(3 * 86400L, Math.max(60L, dms.getCheckInIntervalSeconds() / 3))))) {
                 currentStatus = "due_soon";
             } else {
                 currentStatus = "active";

@@ -19,7 +19,7 @@ public class User {
     @Column(name = "email", nullable = false, unique = true, length = 150)
     private String email;
 
-    @Column(name = "phone_number", length = 20)
+    @Transient
     private String phoneNumber;
 
     @Column(name = "password_hash", nullable = false)
@@ -27,6 +27,9 @@ public class User {
 
     @Column(name = "role", length = 50)
     private String role;
+
+    @Column(name = "account_status", length = 20)
+    private String accountStatus;
 
     @Column(name = "is_verified")
     private Boolean isVerified;
@@ -94,6 +97,14 @@ public class User {
         this.role = role;
     }
 
+    public String getAccountStatus() {
+        return accountStatus;
+    }
+
+    public void setAccountStatus(String accountStatus) {
+        this.accountStatus = accountStatus;
+    }
+
     public Boolean getIsVerified() {
         return isVerified;
     }
@@ -140,6 +151,9 @@ public class User {
         updatedAt = LocalDateTime.now();
         if (role == null) {
             role = "vault_owner";
+        }
+        if (accountStatus == null) {
+            accountStatus = "ACTIVE";
         }
         if (isVerified == null) {
             isVerified = false;
