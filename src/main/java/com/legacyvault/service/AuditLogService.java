@@ -66,6 +66,12 @@ public class AuditLogService {
     @Transactional(readOnly = true)
     public AuditLogTableResponse searchLogs(String search, String role, String action, String fromDate, String toDate,
             int page, int size) {
+        return searchLogs(search, role, action, "ALL", fromDate, toDate, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public AuditLogTableResponse searchLogs(String search, String role, String action, String status, String fromDate, String toDate,
+            int page, int size) {
         if (page < 0) {
             throw new IllegalArgumentException("Page must be zero or greater.");
         }
@@ -80,7 +86,7 @@ public class AuditLogService {
 
         Page<AuditLog> resultPage = auditLogRepository.searchAuditLogs(
                 (search != null && !search.isBlank()) ? search.trim() : null,
-                normalizeFilter(role), normalizeFilter(action), from, to, PageRequest.of(page, size));
+                normalizeFilter(role), normalizeFilter(action), normalizeFilter(status), from, to, PageRequest.of(page, size));
 
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm", Locale.ENGLISH);
 

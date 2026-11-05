@@ -20,6 +20,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, String> {
     @Query("SELECT a FROM AuditLog a WHERE " +
            "(:role IS NULL OR :role = 'ALL' OR UPPER(a.userRole) = UPPER(:role)) AND " +
            "(:action IS NULL OR :action = 'ALL' OR a.action = :action) AND " +
+           "(:status IS NULL OR :status = 'ALL' OR UPPER(a.status) = UPPER(:status)) AND " +
            "(:search IS NULL OR LOWER(a.target) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.userName) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.action) LIKE LOWER(CONCAT('%', :search, '%'))) AND " +
            "(:fromDate IS NULL OR a.createdAt >= :fromDate) AND " +
            "(:toDate IS NULL OR a.createdAt <= :toDate) " +
@@ -28,10 +29,22 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, String> {
             @Param("search") String search,
             @Param("role") String role,
             @Param("action") String action,
+            @Param("status") String status,
             @Param("fromDate") LocalDateTime fromDate,
             @Param("toDate") LocalDateTime toDate,
             Pageable pageable
     );
+
+    default Page<AuditLog> searchAuditLogs(
+            String search,
+            String role,
+            String action,
+            LocalDateTime fromDate,
+            LocalDateTime toDate,
+            Pageable pageable
+    ) {
+        return searchAuditLogs(search, role, action, "ALL", fromDate, toDate, pageable);
+    }
 
     List<AuditLog> findByCreatedAtBetweenOrderByCreatedAtDesc(LocalDateTime from, LocalDateTime to);
 

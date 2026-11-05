@@ -28,11 +28,12 @@ public class AdminAuditController {
             @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "ALL") String role,
             @RequestParam(defaultValue = "ALL") String action,
+            @RequestParam(defaultValue = "ALL") String status,
             @RequestParam(name = "from_date", required = false) String fromDate,
             @RequestParam(name = "to_date", required = false) String toDate,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int size) {
-        return ResponseEntity.ok(auditLogService.searchLogs(search, role, action, fromDate, toDate, page, size));
+        return ResponseEntity.ok(auditLogService.searchLogs(search, role, action, status, fromDate, toDate, page, size));
     }
 
     @GetMapping(value = "/audit-logs/export-csv", produces = "text/csv")

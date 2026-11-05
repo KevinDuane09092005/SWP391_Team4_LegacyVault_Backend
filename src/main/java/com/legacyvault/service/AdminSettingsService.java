@@ -1,13 +1,17 @@
 package com.legacyvault.service;
 
 import com.legacyvault.entity.SystemPolicy;
+import com.legacyvault.entity.ThirdPartyIntegration;
 import com.legacyvault.entity.User;
 import com.legacyvault.exception.AdminApiException;
 import com.legacyvault.repository.SystemPolicyRepository;
+import com.legacyvault.repository.ThirdPartyIntegrationRepository;
 import com.legacyvault.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
@@ -39,19 +43,39 @@ public class AdminSettingsService {
     private static final List<String> BACKUP_FREQUENCIES = List.of("HOURLY", "DAILY", "WEEKLY");
     private static final List<String> BACKUP_REGIONS = List.of("ap-southeast-1", "eu-west-1", "us-east-1");
 
+    private static final Map<String, String> SERVICE_NAME_MAPPING = Map.of(
+            "email", "SMTP_EMAIL",
+            "sms", "SMS_GATEWAY",
+            "kyc", "VNPT_EKYC",
+            "storage", "AWS_S3_STORAGE",
+            "esign", "DIGITAL_SIGNATURE",
+            "enotary", "ELECTRONIC_NOTARY"
+    );
+
     private final SystemPolicyRepository systemPolicyRepository;
     private final UserRepository userRepository;
     private final AuditLogService auditLogService;
     private final NotificationService notificationService;
+    private final ThirdPartyIntegrationRepository thirdPartyIntegrationRepository;
+
+    @Autowired
+    public AdminSettingsService(SystemPolicyRepository systemPolicyRepository,
+                                UserRepository userRepository,
+                                AuditLogService auditLogService,
+                                NotificationService notificationService,
+                                ThirdPartyIntegrationRepository thirdPartyIntegrationRepository) {
+        this.systemPolicyRepository = systemPolicyRepository;
+        this.userRepository = userRepository;
+        this.auditLogService = auditLogService;
+        this.notificationService = notificationService;
+        this.thirdPartyIntegrationRepository = thirdPartyIntegrationRepository;
+    }
 
     public AdminSettingsService(SystemPolicyRepository systemPolicyRepository,
                                 UserRepository userRepository,
                                 AuditLogService auditLogService,
                                 NotificationService notificationService) {
-        this.systemPolicyRepository = systemPolicyRepository;
-        this.userRepository = userRepository;
-        this.auditLogService = auditLogService;
-        this.notificationService = notificationService;
+        this(systemPolicyRepository, userRepository, auditLogService, notificationService, null);
     }
 
     // ---------------- 5. Roles & Permissions ----------------
@@ -245,10 +269,29 @@ public class AdminSettingsService {
         }
 
         savePolicyValue("integration." + cleanId, String.valueOf(enabled), "Integration " + cleanId + " enabled status", adminId);
+        syncThirdPartyIntegration(cleanId, enabled);
         recordAdminAudit(adminId, "INTEGRATION_CHANGED", "INTEGRATION " + cleanId, ipAddress,
                 "Integration " + cleanId + " enabled set to " + enabled);
 
         return listIntegrations();
+    }
+
+    private void syncThirdPartyIntegration(String id, boolean enabled) {
+        if (thirdPartyIntegrationRepository == null) {
+            return;
+        }
+        String serviceName = SERVICE_NAME_MAPPING.getOrDefault(id, id.toUpperCase(Locale.ROOT));
+        ThirdPartyIntegration integration = thirdPartyIntegrationRepository.findByServiceName(serviceName)
+                .orElseGet(() -> {
+                    ThirdPartyIntegration entity = new ThirdPartyIntegration();
+                    entity.setServiceName(serviceName);
+                    return entity;
+                });
+        integration.setStatus(enabled ? "HEALTHY" : "DOWN");
+        integration.setConfigMetadata("{\"enabled\":" + enabled + ",\"id\":\"" + id + "\"}");
+        integration.setLastSyncedAt(LocalDateTime.now());
+        integration.setUpdatedAt(LocalDateTime.now());
+        thirdPartyIntegrationRepository.save(integration);
     }
 
     private Map<String, Object> integrationItem(String id, String name, String category, boolean defaultEnabled, Map<String, String> saved) {
@@ -340,4 +383,3 @@ public class AdminSettingsService {
         throw AdminApiException.badRequest(key + " must be a boolean.");
     }
 }
-
