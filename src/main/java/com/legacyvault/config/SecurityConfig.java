@@ -56,12 +56,13 @@ public class SecurityConfig {
                                 "/api/v1/auth/**",
                                 "/api/v1/contacts/invitation/**",
                                 "/api/v1/handover/beneficiary/portal-context",
+                                "/api/v1/handover/beneficiary/request-access-otp",
                                 "/api/v1/handover/beneficiary/login-with-code",
                                 "/api/v1/handover/beneficiary/verify-otp",
                                 "/api/v1/handover/trigger",
                                 "/api/v1/legal-verification/documents/**"
                         ).permitAll()
-                        .requestMatchers("/api/v1/handover/beneficiary/face/**").hasRole("BENEFICIARY")
+                        .requestMatchers("/api/v1/handover/beneficiary/face/**").hasAnyRole("BENEFICIARY", "VAULT_OWNER", "USER")
                         .requestMatchers(HttpMethod.GET, "/api/v1/plans", "/api/v1/assets/documents/**").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SYSTEM_ADMIN")
                         .anyRequest().authenticated())

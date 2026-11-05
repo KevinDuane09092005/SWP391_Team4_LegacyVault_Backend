@@ -75,7 +75,7 @@ public class AssetHandoverController {
         }
     }
 
-    @PostMapping("/beneficiary/login-with-code")
+    @PostMapping({"/beneficiary/request-access-otp", "/beneficiary/login-with-code"})
     public ResponseEntity<?> beneficiaryLoginWithCode(@Valid @RequestBody BeneficiaryLoginRequest request) {
         try {
             BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode(
