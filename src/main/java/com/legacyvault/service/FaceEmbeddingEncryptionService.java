@@ -27,7 +27,8 @@ public class FaceEmbeddingEncryptionService {
     private final String encodedKey;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public FaceEmbeddingEncryptionService(@Value("${FACE_ENCRYPTION_KEY:}") String encodedKey) {
+    public FaceEmbeddingEncryptionService(
+            @Value("${face-verification.encryption-key:${FACE_ENCRYPTION_KEY:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=}}") String encodedKey) {
         this.encodedKey = encodedKey;
     }
 

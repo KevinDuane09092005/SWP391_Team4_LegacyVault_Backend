@@ -30,7 +30,7 @@ public class BeneficiaryFaceEnrollment {
     private String beneficiaryContactId;
 
     @Lob
-    @Column(name = "encrypted_embedding", nullable = false)
+    @Column(name = "encrypted_embedding", nullable = false, columnDefinition = "LONGBLOB")
     private byte[] encryptedEmbedding;
 
     @Column(name = "embedding_version", nullable = false, length = 40)

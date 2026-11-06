@@ -39,6 +39,12 @@ jwt:
 encryption:
   secret-key: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
+face-verification:
+  encryption-key: ${FACE_ENCRYPTION_KEY:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=}
+  liveness-threshold: 0.35
+  anti-spoof-threshold: 0.35
+  face-match-threshold: 0.5
+
 storage:
   local:
     base-dir: uploads

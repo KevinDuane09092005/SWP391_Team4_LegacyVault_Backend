@@ -10,6 +10,8 @@ import com.legacyvault.entity.BeneficiaryFaceEnrollment;
 import com.legacyvault.repository.BeneficiaryClaimSessionRepository;
 import com.legacyvault.repository.BeneficiaryFaceEnrollmentRepository;
 import com.legacyvault.repository.HandoverCaseRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,25 +38,41 @@ public class BeneficiaryFaceVerificationService {
     private static final int MAX_ACTIVE_SESSIONS = 500;
     private static final int EMBEDDING_MIN_LENGTH = 64;
     private static final int EMBEDDING_MAX_LENGTH = 4096;
-    private static final double LIVENESS_THRESHOLD = 0.6;
-    private static final double ANTI_SPOOF_THRESHOLD = 0.6;
+    private static final double DEFAULT_LIVENESS_THRESHOLD = 0.35;
+    private static final double DEFAULT_ANTI_SPOOF_THRESHOLD = 0.35;
     private static final double FACE_MATCH_THRESHOLD = 0.5;
 
     private final BeneficiaryFaceEnrollmentRepository enrollmentRepository;
     private final BeneficiaryClaimSessionRepository claimSessionRepository;
     private final HandoverCaseRepository handoverCaseRepository;
     private final FaceEmbeddingEncryptionService encryptionService;
+    private final double livenessThreshold;
+    private final double antiSpoofThreshold;
     private final ConcurrentMap<UUID, FaceCheckSession> sessions = new ConcurrentHashMap<>();
+
+    @Autowired
+    public BeneficiaryFaceVerificationService(
+            BeneficiaryFaceEnrollmentRepository enrollmentRepository,
+            BeneficiaryClaimSessionRepository claimSessionRepository,
+            HandoverCaseRepository handoverCaseRepository,
+            FaceEmbeddingEncryptionService encryptionService,
+            @Value("${face-verification.liveness-threshold:0.35}") double livenessThreshold,
+            @Value("${face-verification.anti-spoof-threshold:0.35}") double antiSpoofThreshold) {
+        this.enrollmentRepository = enrollmentRepository;
+        this.claimSessionRepository = claimSessionRepository;
+        this.handoverCaseRepository = handoverCaseRepository;
+        this.encryptionService = encryptionService;
+        this.livenessThreshold = livenessThreshold;
+        this.antiSpoofThreshold = antiSpoofThreshold;
+    }
 
     public BeneficiaryFaceVerificationService(
             BeneficiaryFaceEnrollmentRepository enrollmentRepository,
             BeneficiaryClaimSessionRepository claimSessionRepository,
             HandoverCaseRepository handoverCaseRepository,
             FaceEmbeddingEncryptionService encryptionService) {
-        this.enrollmentRepository = enrollmentRepository;
-        this.claimSessionRepository = claimSessionRepository;
-        this.handoverCaseRepository = handoverCaseRepository;
-        this.encryptionService = encryptionService;
+        this(enrollmentRepository, claimSessionRepository, handoverCaseRepository, encryptionService,
+                DEFAULT_LIVENESS_THRESHOLD, DEFAULT_ANTI_SPOOF_THRESHOLD);
     }
 
     @Transactional(readOnly = true)
@@ -185,8 +203,8 @@ public class BeneficiaryFaceVerificationService {
         double livenessScore = request.livenessScore();
         double antiSpoofScore = request.antiSpoofScore();
         boolean livenessPassed = challengePassed
-                && isPassingScore(livenessScore, LIVENESS_THRESHOLD)
-                && isPassingScore(antiSpoofScore, ANTI_SPOOF_THRESHOLD);
+                && isPassingScore(livenessScore, livenessThreshold)
+                && isPassingScore(antiSpoofScore, antiSpoofThreshold);
         boolean matchPassed = matchScore >= FACE_MATCH_THRESHOLD;
         boolean passed = livenessPassed && matchPassed;
 
