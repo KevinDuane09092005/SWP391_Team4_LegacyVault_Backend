@@ -204,7 +204,7 @@ public class HandoverExecutionService {
                         decrypted,
                         a.getAttachmentUrl(),
                         "Legal Verification",
-                        "RELEASED".equalsIgnoreCase(c.getStatus()) ? "AUTHORIZED" : "AUTHORIZED & LOCKED"));
+                        "RELEASED".equalsIgnoreCase(c.getStatus()) || "COMPLETED".equalsIgnoreCase(c.getStatus()) ? "AUTHORIZED" : "AUTHORIZED & LOCKED"));
             }
         }
 
