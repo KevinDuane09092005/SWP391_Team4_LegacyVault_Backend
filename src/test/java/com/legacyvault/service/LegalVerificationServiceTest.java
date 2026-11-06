@@ -17,7 +17,6 @@ import org.springframework.mock.web.MockMultipartFile;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -135,6 +134,25 @@ public class LegalVerificationServiceTest {
         assertEquals("UNDER_REVIEW", testCase.getStatus());
         assertEquals("verifier-uuid-1", testCase.getAssignedVerifierId());
         verify(handoverCaseRepository, times(1)).save(testCase);
+    }
+
+    @Test
+    void testStartReview_PlaceholderVerifierDemo_ResolvesToValidUser() {
+        User verifierUser = new User();
+        verifierUser.setId("real-verifier-id");
+        verifierUser.setRole("LEGAL_VERIFIER");
+
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(testCase));
+        when(userRepository.findAll()).thenReturn(List.of(verifierUser));
+        when(handoverCaseRepository.save(any(HandoverCase.class))).thenReturn(testCase);
+        when(userRepository.findById("owner-1")).thenReturn(Optional.of(testOwner));
+        when(userRepository.findById("real-verifier-id")).thenReturn(Optional.of(verifierUser));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-1")).thenReturn(List.of(testExecutor));
+        when(verificationDocumentRepository.findByCaseIdOrderByUploadedAtDesc("case-uuid-1042")).thenReturn(List.of(testDoc));
+
+        legalVerificationService.startReview("case-uuid-1042", "verifier-demo");
+
+        assertEquals("real-verifier-id", testCase.getAssignedVerifierId());
     }
 
     @Test

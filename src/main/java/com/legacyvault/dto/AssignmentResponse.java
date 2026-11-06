@@ -12,6 +12,7 @@ public class AssignmentResponse {
     private String executorContactId;
     private String executorName;
     private String executorEmail;
+    private String handoverProtocol;
     private String handoverInstructions;
     private List<BeneficiaryDto> beneficiaries;
     private LocalDateTime createdAt;
@@ -23,6 +24,14 @@ public class AssignmentResponse {
                               String executorContactId, String executorName, String executorEmail, 
                               String handoverInstructions, List<BeneficiaryDto> beneficiaries, 
                               LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this(assignmentId, assetId, assetName, assetType, executorContactId, executorName, executorEmail,
+                "legal_verification", handoverInstructions, beneficiaries, createdAt, updatedAt);
+    }
+
+    public AssignmentResponse(String assignmentId, String assetId, String assetName, String assetType, 
+                              String executorContactId, String executorName, String executorEmail, 
+                              String handoverProtocol, String handoverInstructions, List<BeneficiaryDto> beneficiaries, 
+                              LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.assignmentId = assignmentId;
         this.assetId = assetId;
         this.assetName = assetName;
@@ -30,6 +39,7 @@ public class AssignmentResponse {
         this.executorContactId = executorContactId;
         this.executorName = executorName;
         this.executorEmail = executorEmail;
+        this.handoverProtocol = handoverProtocol != null ? handoverProtocol : "legal_verification";
         this.handoverInstructions = handoverInstructions;
         this.beneficiaries = beneficiaries;
         this.createdAt = createdAt;
@@ -90,6 +100,14 @@ public class AssignmentResponse {
 
     public void setExecutorEmail(String executorEmail) {
         this.executorEmail = executorEmail;
+    }
+
+    public String getHandoverProtocol() {
+        return handoverProtocol;
+    }
+
+    public void setHandoverProtocol(String handoverProtocol) {
+        this.handoverProtocol = handoverProtocol;
     }
 
     public String getHandoverInstructions() {

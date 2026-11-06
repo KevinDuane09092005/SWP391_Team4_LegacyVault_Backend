@@ -62,6 +62,18 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void deactivatedUserTokenDoesNotAuthenticate() throws Exception {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, userRepository);
+        when(jwtService.validateToken("valid-token")).thenReturn(true);
+        when(jwtService.extractUserId("valid-token")).thenReturn("user-1");
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user("user-1", "vault_owner", "DEACTIVATED")));
+
+        filter.doFilter(requestWithToken(), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    @Test
     void beneficiaryTokenAuthenticatesWhenSubjectIsAContactNotInUserRepository() throws Exception {
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, userRepository);
         when(jwtService.validateToken("valid-token")).thenReturn(true);
@@ -74,6 +86,33 @@ class JwtAuthenticationFilterTest {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         assertNotNull(authentication);
         assertEquals("contact-uuid-1", authentication.getName());
+        assertTrue(authentication.getAuthorities().contains(new SimpleGrantedAuthority("ROLE_BENEFICIARY")));
+    }
+
+    @Test
+    void userWithDesignatedContactRolesReceivesBothPrimaryAndExtraRoles() throws Exception {
+        com.legacyvault.repository.ContactRepository contactRepository = mock(com.legacyvault.repository.ContactRepository.class);
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtService, userRepository, contactRepository);
+
+        User user = user("user-3", "vault_owner", "ACTIVE");
+        user.setEmail("sinhleed12@gmail.com");
+
+        when(jwtService.validateToken("valid-token")).thenReturn(true);
+        when(jwtService.extractUserId("valid-token")).thenReturn("user-3");
+        when(userRepository.findById("user-3")).thenReturn(Optional.of(user));
+
+        com.legacyvault.entity.Contact contact = new com.legacyvault.entity.Contact();
+        contact.setEmail("sinhleed12@gmail.com");
+        contact.setIsBeneficiary(true);
+        contact.setIsExecutor(false);
+        when(contactRepository.findByEmail("sinhleed12@gmail.com")).thenReturn(java.util.List.of(contact));
+
+        filter.doFilter(requestWithToken(), new MockHttpServletResponse(), mock(FilterChain.class));
+
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        assertNotNull(authentication);
+        assertEquals("user-3", authentication.getName());
+        assertTrue(authentication.getAuthorities().contains(new SimpleGrantedAuthority("ROLE_VAULT_OWNER")));
         assertTrue(authentication.getAuthorities().contains(new SimpleGrantedAuthority("ROLE_BENEFICIARY")));
     }
 

@@ -8,6 +8,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -41,6 +42,28 @@ public class NotificationController {
     public ResponseEntity<Map<String, String>> markAllAsRead(Authentication authentication) {
         notificationService.markAllAsRead(userId(authentication));
         return ResponseEntity.ok(Map.of("message", "All notifications marked as read"));
+    }
+
+    @PatchMapping("/{notificationId}/read")
+    public ResponseEntity<Map<String, Object>> markAsReadPatch(
+            @PathVariable String notificationId,
+            Authentication authentication) {
+        notificationService.markAsRead(userId(authentication), notificationId);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Notification marked as read",
+                "notification_id", notificationId));
+    }
+
+    @PostMapping("/{notificationId}/read")
+    public ResponseEntity<Map<String, Object>> markAsReadPost(
+            @PathVariable String notificationId,
+            Authentication authentication) {
+        notificationService.markAsRead(userId(authentication), notificationId);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Notification marked as read",
+                "notification_id", notificationId));
     }
 
     @GetMapping("/{notificationId}")

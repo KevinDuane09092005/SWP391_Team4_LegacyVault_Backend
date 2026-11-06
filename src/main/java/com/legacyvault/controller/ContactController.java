@@ -11,6 +11,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @RestController
@@ -36,7 +37,7 @@ public class ContactController {
                     "contact", contact
             ));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return mapContactError(e);
         }
     }
 
@@ -109,14 +110,20 @@ public class ContactController {
     @GetMapping
     public ResponseEntity<?> getContacts(
             Authentication authentication,
-            @RequestParam(value = "keyword", required = false) String keyword
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "expectedRole", required = false) String expectedRole,
+            @RequestParam(value = "expected_role", required = false) String expectedRoleSnake,
+            @RequestParam(value = "status", required = false) String status
     ) {
         try {
             String ownerId = getAuthenticatedUserId(authentication);
-            List<ContactResponse> contacts = contactService.getContacts(ownerId, keyword);
+            String effectiveKeyword = (keyword != null && !keyword.isBlank()) ? keyword : search;
+            String effectiveRole = (expectedRole != null && !expectedRole.isBlank()) ? expectedRole : expectedRoleSnake;
+            List<ContactResponse> contacts = contactService.getContacts(ownerId, effectiveKeyword, effectiveRole, status);
             return ResponseEntity.ok(contacts);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return mapContactError(e);
         }
     }
 
@@ -134,6 +141,41 @@ public class ContactController {
         }
     }
 
+    @PutMapping("/{contactId}")
+    public ResponseEntity<?> updateContact(
+            Authentication authentication,
+            @PathVariable("contactId") String contactId,
+            @RequestBody CreateContactRequest request
+    ) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            ContactResponse updated = contactService.updateContact(ownerId, contactId, request);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Đã cập nhật thông tin người liên hệ thành công",
+                    "contact", updated
+            ));
+        } catch (Exception e) {
+            return mapContactError(e);
+        }
+    }
+
+    @PostMapping("/{contactId}/resend-invite")
+    public ResponseEntity<?> resendInvitation(
+            Authentication authentication,
+            @PathVariable("contactId") String contactId
+    ) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            ContactResponse response = contactService.resendContactInvitation(ownerId, contactId);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Đã gửi lại email lời mời liên hệ thành công",
+                    "contact", response
+            ));
+        } catch (Exception e) {
+            return mapContactError(e);
+        }
+    }
+
     @DeleteMapping("/{contactId}/invitation")
     public ResponseEntity<?> revokeInvitation(
             Authentication authentication,
@@ -146,10 +188,25 @@ public class ContactController {
                     "message", "Đã thu hồi lời mời liên hệ thành công",
                     "contact", response
             ));
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return mapContactError(e);
+        }
+    }
+
+    @PostMapping("/{contactId}/revoke-access")
+    public ResponseEntity<?> revokeAccess(
+            Authentication authentication,
+            @PathVariable("contactId") String contactId
+    ) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            ContactResponse response = contactService.revokeContactAccess(ownerId, contactId);
+            return ResponseEntity.ok(Map.of(
+                    "message", "Đã thu hồi quyền truy cập của người liên hệ thành công",
+                    "contact", response
+            ));
+        } catch (Exception e) {
+            return mapContactError(e);
         }
     }
 
@@ -162,10 +219,8 @@ public class ContactController {
             String ownerId = getAuthenticatedUserId(authentication);
             contactService.deleteContact(ownerId, contactId);
             return ResponseEntity.ok(Map.of("message", "Đã xóa người liên hệ thành công"));
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return mapContactError(e);
         }
     }
 
@@ -174,5 +229,21 @@ public class ContactController {
             throw new RuntimeException("Unauthorized: No user session found");
         }
         return authentication.getName();
+    }
+
+    private ResponseEntity<Map<String, String>> mapContactError(Exception e) {
+        String msg = e.getMessage() != null ? e.getMessage() : "Contact operation failed";
+        String lower = msg.toLowerCase(Locale.ROOT);
+        HttpStatus status = HttpStatus.BAD_REQUEST;
+
+        if (lower.contains("not found")) {
+            status = HttpStatus.NOT_FOUND;
+        } else if (lower.contains("đã tồn tại") || lower.contains("không thể xóa")) {
+            status = HttpStatus.CONFLICT;
+        } else if (lower.contains("unauthorized")) {
+            status = HttpStatus.UNAUTHORIZED;
+        }
+
+        return ResponseEntity.status(status).body(Map.of("error", msg));
     }
 }

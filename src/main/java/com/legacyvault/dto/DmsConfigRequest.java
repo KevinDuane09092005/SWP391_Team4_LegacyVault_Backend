@@ -1,5 +1,6 @@
 package com.legacyvault.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Min;
 
@@ -7,16 +8,20 @@ public class DmsConfigRequest {
 
     @Min(value = 1, message = "Check-in interval must be at least 1 second")
     @JsonProperty("checkInIntervalSeconds")
+    @JsonAlias({"check_in_interval_seconds"})
     private Integer checkInIntervalSeconds;
 
-    @Min(value = 1, message = "Grace period must be at least 1 second")
+    @Min(value = 0, message = "Grace period must be at least 0 seconds")
     @JsonProperty("gracePeriodSeconds")
+    @JsonAlias({"grace_period_seconds"})
     private Integer gracePeriodSeconds;
 
     @JsonProperty("checkInIntervalDays")
+    @JsonAlias({"check_in_interval_days"})
     private Integer checkInIntervalDays;
 
     @JsonProperty("gracePeriodDays")
+    @JsonAlias({"grace_period_days"})
     private Integer gracePeriodDays;
 
     public DmsConfigRequest() {

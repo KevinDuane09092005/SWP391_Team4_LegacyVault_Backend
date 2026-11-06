@@ -18,7 +18,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -74,7 +73,36 @@ public class DmsServiceTest {
     }
 
     @Test
-    void testSaveOrUpdateConfig_Success() {
+    void testGetDmsStatus_IgnoresUnverifiedExecutor() {
+        Contact pendingExecutor = new Contact("owner-1", "Unverified Exec", "Friend", "pending@legacymail.com", "0901112222", false, true, "pending");
+        when(dmsRepository.findByOwnerId("owner-1")).thenReturn(Optional.of(testDms));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-1")).thenReturn(List.of(pendingExecutor));
+
+        DmsStatusResponse response = dmsService.getDmsStatus("owner-1");
+
+        assertNotNull(response);
+        assertNull(response.getExecutorName());
+        assertNull(response.getExecutorEmail());
+    }
+
+    @Test
+    void testGetDmsStatus_PreservesPausedStatusInDb() {
+        testDms.setStatus("paused");
+        testDms.setNextCheckInAt(LocalDateTime.now().minusSeconds(500));
+        when(dmsRepository.findByOwnerId("owner-1")).thenReturn(Optional.of(testDms));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-1")).thenReturn(List.of(testExecutor));
+
+        DmsStatusResponse response = dmsService.getDmsStatus("owner-1");
+
+        assertNotNull(response);
+        assertEquals("paused", response.getStatus());
+        assertEquals(0, response.getSecondsRemaining());
+    }
+
+    @Test
+    void testSaveOrUpdateConfig_Success_ResetsTimerFromNow() {
+        // Old lastCheckInAt was 10 minutes ago; switching to 60s interval must reset nextCheckInAt in the future
+        testDms.setLastCheckInAt(LocalDateTime.now().minusMinutes(10));
         DmsConfigRequest request = new DmsConfigRequest(60, 10);
 
         when(dmsRepository.findByOwnerId("owner-1")).thenReturn(Optional.of(testDms));
@@ -87,6 +115,7 @@ public class DmsServiceTest {
         assertEquals(60, response.getCheckInIntervalDays());
         assertEquals(10, response.getGracePeriodDays());
         assertEquals("active", response.getStatus());
+        assertTrue(response.getSecondsRemaining() > 0);
         verify(dmsRepository, times(1)).save(any(DeadMansSwitch.class));
     }
 
@@ -143,6 +172,7 @@ public class DmsServiceTest {
 
         assertNotNull(logs);
         assertEquals(1, logs.size());
+        assertEquals("dms-uuid-1", logs.get(0).getDmsId());
         assertEquals("MANUAL_DASHBOARD", logs.get(0).getCheckInType());
     }
 }

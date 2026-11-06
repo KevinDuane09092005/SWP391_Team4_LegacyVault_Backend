@@ -58,7 +58,7 @@ class AuditLogServiceTest {
     @Test
     void testSearchLogs_WithResults() {
         Page<AuditLog> page = new PageImpl<>(List.of(mockLog), PageRequest.of(0, 6), 1);
-        when(auditLogRepository.searchAuditLogs(any(), any(), any(), any(), any(), any(PageRequest.class)))
+        when(auditLogRepository.searchAuditLogs(any(), any(), any(), any(), any(), any(), any(PageRequest.class)))
                 .thenReturn(page);
 
         AuditLogTableResponse response = auditLogService.searchLogs("LV-1042", "ALL", "ALL", null, null, 0, 6);
@@ -73,8 +73,24 @@ class AuditLogServiceTest {
     }
 
     @Test
+    void testSearchLogs_WithStatusFilter() {
+        AuditLog failedLog = new AuditLog("usr-3", "Hacker", "UNKNOWN",
+                "LOGIN_ATTEMPT", "Auth Endpoint", "FAILURE", "10.0.0.1");
+        failedLog.setLogId("log-002");
+        Page<AuditLog> page = new PageImpl<>(List.of(failedLog), PageRequest.of(0, 10), 1);
+        when(auditLogRepository.searchAuditLogs(isNull(), eq("ALL"), eq("ALL"), eq("FAILURE"), isNull(), isNull(), any(PageRequest.class)))
+                .thenReturn(page);
+
+        AuditLogTableResponse response = auditLogService.searchLogs(null, "ALL", "ALL", "FAILURE", null, null, 0, 10);
+
+        assertNotNull(response);
+        assertEquals(1, response.getLogs().size());
+        assertEquals("FAILURE", response.getLogs().get(0).getStatus());
+    }
+
+    @Test
     void testSearchLogs_EmptyDatabaseReturnsEmptyPage() {
-        when(auditLogRepository.searchAuditLogs(isNull(), eq("ALL"), eq("ALL"), isNull(), isNull(), any(PageRequest.class)))
+        when(auditLogRepository.searchAuditLogs(isNull(), eq("ALL"), eq("ALL"), eq("ALL"), isNull(), isNull(), any(PageRequest.class)))
                 .thenReturn(Page.empty());
 
         AuditLogTableResponse response = auditLogService.searchLogs(null, "ALL", "ALL", null, null, 0, 6);

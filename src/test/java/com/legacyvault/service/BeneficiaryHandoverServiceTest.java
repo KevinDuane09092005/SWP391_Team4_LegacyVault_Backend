@@ -6,10 +6,12 @@ import com.legacyvault.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -122,6 +124,30 @@ class BeneficiaryHandoverServiceTest {
     }
 
     @Test
+    void testVerifyOtp_WithCaseRefAndUserJwt_UpdatesSessionIdentityVerified() {
+        BeneficiaryClaimSession claim = new BeneficiaryClaimSession();
+        claim.setCaseId("case-uuid-1042");
+        claim.setBeneficiaryContactId("beneficiary-uuid-1");
+        claim.setTokenStatus("ACTIVE");
+        claim.setIdentityVerified(false);
+
+        when(claimSessionRepository.findByClaimTokenHash("user-login-jwt")).thenReturn(Optional.empty());
+        when(handoverCaseRepository.findByCaseNumber("LV-1042")).thenReturn(Optional.of(mockCase));
+        when(claimSessionRepository.findByCaseIdAndBeneficiaryContactId("case-uuid-1042", "user-id-99"))
+                .thenReturn(Optional.empty());
+        when(claimSessionRepository.findByCaseId("case-uuid-1042")).thenReturn(List.of(claim));
+        when(jwtService.generateToken(eq("beneficiary-uuid-1"), anyString(), eq("BENEFICIARY")))
+                .thenReturn("beneficiary-jwt");
+
+        VerifyBeneficiaryOtpResponse response = beneficiaryHandoverService.verifyOtp(
+                "user-login-jwt", "482916", "LV-1042", "user-id-99");
+
+        assertTrue(response.isOtpVerified());
+        assertTrue(claim.getIdentityVerified());
+        verify(claimSessionRepository).save(claim);
+    }
+
+    @Test
     void testVerifyOtp_InvalidOtp() {
         assertThrows(IllegalArgumentException.class, () ->
                 beneficiaryHandoverService.verifyOtp("mock-session-token", "999999"));
@@ -167,6 +193,25 @@ class BeneficiaryHandoverServiceTest {
         assertEquals("COMPLETED", response.getStatus());
         assertEquals("COMPLETED", mockCase.getStatus());
         verify(handoverReceiptRepository).save(any(HandoverReceipt.class));
+    }
+
+    @Test
+    void testConfirmReceivedAndCloseCase_UsesRealAssetIdAndSavesFeedbackNotes() {
+        stubVerifiedFaceClaim();
+        Asset realAsset = new Asset("owner-uuid-1", "bank_account", "VCB Account", "desc", "enc", null);
+        realAsset.setAssetId("real-asset-uuid-1");
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(mockCase));
+        when(assetRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(realAsset));
+
+        beneficiaryHandoverService.confirmReceivedAndCloseCase(
+                "beneficiary-uuid-1", true, "127.0.0.1", "Mozilla/5.0", null, "Đã nhận đầy đủ tài sản");
+
+        ArgumentCaptor<HandoverReceipt> captor = ArgumentCaptor.forClass(HandoverReceipt.class);
+        verify(handoverReceiptRepository).save(captor.capture());
+        HandoverReceipt savedReceipt = captor.getValue();
+        assertEquals("real-asset-uuid-1", savedReceipt.getAssetId());
+        assertEquals("beneficiary-uuid-1", savedReceipt.getBeneficiaryContactId());
+        assertEquals("Đã nhận đầy đủ tài sản", savedReceipt.getFeedbackNotes());
     }
 
     @Test

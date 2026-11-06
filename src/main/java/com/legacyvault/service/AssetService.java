@@ -49,11 +49,30 @@ public class AssetService {
 
     @Transactional(readOnly = true)
     public List<AssetResponse> getAssetsByOwner(String ownerId) {
+        return getAssetsByOwner(ownerId, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AssetResponse> getAssetsByOwner(String ownerId, String status, String assetType) {
         if (ownerId == null || ownerId.trim().isEmpty()) {
             throw new IllegalArgumentException("Owner ID is required");
         }
         return assetRepository.findByOwnerId(ownerId)
                 .stream()
+                .filter(asset -> {
+                    if (status == null || status.isBlank() || "ALL".equalsIgnoreCase(status)) {
+                        return true;
+                    }
+                    return asset.getStatus() != null && asset.getStatus().equalsIgnoreCase(status.trim());
+                })
+                .filter(asset -> {
+                    if (assetType == null || assetType.isBlank() || "ALL".equalsIgnoreCase(assetType)) {
+                        return true;
+                    }
+                    String target = assetType.trim().replace("_", " ");
+                    String current = asset.getAssetType() != null ? asset.getAssetType().trim().replace("_", " ") : "";
+                    return current.equalsIgnoreCase(target);
+                })
                 .map(asset -> mapToResponse(asset, false))
                 .collect(Collectors.toList());
     }
@@ -122,6 +141,21 @@ public class AssetService {
         AssetResponse response = mapToResponse(savedAsset, true);
         response.setDecryptedCredentials(decryptedCredentials);
         return response;
+    }
+
+    @Transactional
+    public void deleteAsset(String ownerId, String assetId) {
+        if (ownerId == null || ownerId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Owner ID is required");
+        }
+        if (assetId == null || assetId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Asset ID is required");
+        }
+
+        Asset asset = assetRepository.findByAssetIdAndOwnerId(assetId.trim(), ownerId.trim())
+                .orElseThrow(() -> new RuntimeException("Asset not found or access denied"));
+
+        assetRepository.delete(asset);
     }
 
     private AssetResponse mapToResponse(Asset asset, boolean includeDecrypted) {

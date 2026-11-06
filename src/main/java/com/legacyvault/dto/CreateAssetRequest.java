@@ -1,5 +1,6 @@
 package com.legacyvault.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -7,16 +8,20 @@ public class CreateAssetRequest {
 
     @NotBlank(message = "Asset type is required")
     @Size(max = 50, message = "Asset type cannot exceed 50 characters")
+    @JsonAlias({"asset_type"})
     private String assetType;
 
     @NotBlank(message = "Asset name is required")
     @Size(max = 150, message = "Asset name cannot exceed 150 characters")
+    @JsonAlias({"asset_name"})
     private String assetName;
 
     private String description;
 
+    @JsonAlias({"login_credentials", "loginCredentials"})
     private String credentials;
 
+    @JsonAlias({"attachment_url"})
     private String attachmentUrl;
 
     public CreateAssetRequest() {}

@@ -38,6 +38,7 @@ class NotificationServiceTest {
                 "Legal verification for Case #LV-1042 has been approved by the legal verifier.",
                 "VERIFICATION_RESULT", "Approved");
         mockNotification.setNotificationId("notif-1042-approved");
+        mockNotification.setDeepLink("/dashboard/beneficiary/handover/LV-1042");
     }
 
     @Test
@@ -53,6 +54,8 @@ class NotificationServiceTest {
         assertEquals(1, response.getNotifications().size());
         assertEquals("Legal Verification Approved", response.getNotifications().get(0).getTitle());
         assertEquals("Approved", response.getNotifications().get(0).getBadgeLabel());
+        assertEquals("LV-1042", response.getNotifications().get(0).getCaseId());
+        assertEquals("/dashboard/beneficiary/handover/LV-1042", response.getNotifications().get(0).getDeepLink());
         assertEquals(1, response.getUnreadCount());
     }
 
@@ -66,6 +69,7 @@ class NotificationServiceTest {
 
         assertEquals(5, response.getNotifications().size());
         assertEquals(2, response.getUnreadCount());
+        assertEquals("LV-1042", response.getNotifications().get(0).getCaseId());
     }
 
     @Test
@@ -73,6 +77,18 @@ class NotificationServiceTest {
         when(notificationRepository.findByUserIdAndIsReadFalse("user-1")).thenReturn(List.of(mockNotification));
 
         notificationService.markAllAsRead("user-1");
+
+        assertTrue(mockNotification.getIsRead());
+        verify(notificationRepository).save(mockNotification);
+    }
+
+    @Test
+    void markAsReadUpdatesSingleNotification() {
+        mockNotification.setIsRead(false);
+        when(notificationRepository.findByNotificationIdAndUserId("notif-1042-approved", "user-1"))
+                .thenReturn(Optional.of(mockNotification));
+
+        notificationService.markAsRead("user-1", "notif-1042-approved");
 
         assertTrue(mockNotification.getIsRead());
         verify(notificationRepository).save(mockNotification);
@@ -92,10 +108,11 @@ class NotificationServiceTest {
     }
 
     @Test
-    void paymentNotificationDetailIsBuiltFromTheOwnedNotification() {
+    void paymentNotificationDetailIsBuiltFromTheOwnedNotificationAndAutoMarkedAsRead() {
         InAppNotification paymentNotification = new InAppNotification(
                 "user-1", "Payment successful", "Your subscription renewed.", "PAYMENT_SUCCEEDED", "Success");
         paymentNotification.setNotificationId("payment-notice-1");
+        paymentNotification.setIsRead(false);
         when(notificationRepository.findByNotificationIdAndUserId("payment-notice-1", "user-1"))
                 .thenReturn(Optional.of(paymentNotification));
 
@@ -105,6 +122,8 @@ class NotificationServiceTest {
         assertEquals("Payment successful", detail.getTitle());
         assertEquals("PAYMENT_SUCCEEDED", detail.getEventMetadata().getEventType());
         assertEquals("Your subscription renewed.", detail.getRelatedActivityTimeline().get(0).getDescription());
+        assertTrue(paymentNotification.getIsRead());
+        verify(notificationRepository).save(paymentNotification);
     }
 
     @Test
@@ -125,5 +144,13 @@ class NotificationServiceTest {
 
         assertNotNull(created);
         verify(notificationRepository).save(any(InAppNotification.class));
+    }
+
+    @Test
+    void extractCaseIdFromVariousFormats() {
+        assertEquals("LV-1042", NotificationService.extractCaseId("/dashboard/beneficiary/handover/LV-1042", null, null));
+        assertEquals("LV-2048", NotificationService.extractCaseId(null, "Handover Case #LV-2048 Triggered", null));
+        assertEquals("CASE-99", NotificationService.extractCaseId(null, null, "Details for case #CASE-99 are ready"));
+        assertNull(NotificationService.extractCaseId(null, "Welcome to LegacyVault", "No case reference here"));
     }
 }

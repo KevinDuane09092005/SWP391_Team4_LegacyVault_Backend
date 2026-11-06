@@ -29,7 +29,7 @@ public class Asset {
     @Column(name = "encrypted_credentials", columnDefinition = "TEXT")
     private String encryptedCredentials;
 
-    @Column(name = "attachment_url", length = 255)
+    @Column(name = "attachment_url", columnDefinition = "TEXT")
     private String attachmentUrl;
 
     @Column(name = "status", length = 50)

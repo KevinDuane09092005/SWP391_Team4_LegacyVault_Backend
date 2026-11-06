@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -67,6 +68,21 @@ public class HandoverService {
 
     @Transactional
     public HandoverCase createHandoverCase(String ownerId, String dmsId) {
+        // Ngăn chặn tạo trùng lặp nhiều HandoverCase đang mở cho cùng một chủ két
+        List<HandoverCase> existingCases = handoverCaseRepository.findByOwnerIdOrderByTriggeredAtDesc(ownerId);
+        if (existingCases != null && !existingCases.isEmpty()) {
+            Optional<HandoverCase> activeCase = existingCases.stream()
+                    .filter(c -> c.getStatus() != null
+                            && !"rejected".equalsIgnoreCase(c.getStatus())
+                            && !"completed".equalsIgnoreCase(c.getStatus()))
+                    .findFirst();
+            if (activeCase.isPresent()) {
+                logger.info("Active HandoverCase {} already exists for ownerId={}. Reusing existing case.",
+                        activeCase.get().getCaseNumber(), ownerId);
+                return activeCase.get();
+            }
+        }
+
         String datePrefix = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
         String randomSuffix = UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         String caseNumber = "HC-" + datePrefix + "-" + randomSuffix;
@@ -79,8 +95,11 @@ public class HandoverService {
         User owner = userRepository.findById(ownerId).orElse(null);
         String ownerName = owner != null ? owner.getFullName() : "Vault Owner";
 
-        List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(ownerId);
-        for (Contact executor : executors) {
+        List<Contact> verifiedExecutors = contactRepository.findByOwnerIdAndIsExecutorTrue(ownerId)
+                .stream()
+                .filter(c -> "verified".equalsIgnoreCase(c.getStatus()))
+                .collect(Collectors.toList());
+        for (Contact executor : verifiedExecutors) {
             emailService.sendHandoverTriggeredNotice(executor.getEmail(), executor.getFullName(), ownerName, caseNumber);
         }
 

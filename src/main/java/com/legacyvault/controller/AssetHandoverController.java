@@ -75,7 +75,7 @@ public class AssetHandoverController {
         }
     }
 
-    @PostMapping("/beneficiary/login-with-code")
+    @PostMapping({"/beneficiary/request-access-otp", "/beneficiary/login-with-code"})
     public ResponseEntity<?> beneficiaryLoginWithCode(@Valid @RequestBody BeneficiaryLoginRequest request) {
         try {
             BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode(
@@ -89,12 +89,19 @@ public class AssetHandoverController {
     @PostMapping("/beneficiary/verify-otp")
     public ResponseEntity<?> verifyBeneficiaryOtp(
             @Valid @RequestBody VerifyBeneficiaryOtpRequest request,
-            @RequestHeader(name = "Authorization", required = false) String authHeader) {
+            @RequestParam(name = "case_ref", required = false) String caseRefParam,
+            @RequestHeader(name = "Authorization", required = false) String authHeader,
+            Authentication authentication) {
         try {
             String sessionToken = authHeader != null && authHeader.startsWith("Bearer ")
                     ? authHeader.substring(7)
                     : "valid_session_token";
-            VerifyBeneficiaryOtpResponse response = beneficiaryHandoverService.verifyOtp(sessionToken, request.getOtpCode());
+            String effectiveCaseRef = (request.getCaseRef() != null && !request.getCaseRef().isBlank())
+                    ? request.getCaseRef()
+                    : caseRefParam;
+            String authenticatedUserId = authentication != null ? authentication.getName() : null;
+            VerifyBeneficiaryOtpResponse response = beneficiaryHandoverService.verifyOtp(
+                    sessionToken, request.getOtpCode(), effectiveCaseRef, authenticatedUserId);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -219,7 +226,8 @@ public class AssetHandoverController {
                     Boolean.TRUE.equals(request.getAcceptDigitalEstateCustody()),
                     ipAddress,
                     userAgent,
-                    caseRef
+                    caseRef,
+                    request.getFeedbackNotes()
             );
             return ResponseEntity.ok(response);
         } catch (Exception e) {

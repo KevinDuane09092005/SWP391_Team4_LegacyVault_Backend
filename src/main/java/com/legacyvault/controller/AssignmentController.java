@@ -32,6 +32,11 @@ public class AssignmentController {
             String ownerId = getAuthenticatedUserId(authentication);
             Map<String, Object> result = assignmentService.validateAssignment(ownerId, request);
             return ResponseEntity.ok(result);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                    "valid", false,
+                    "error", e.getMessage()
+            ));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of(
                     "valid", false,
@@ -52,6 +57,8 @@ public class AssignmentController {
                     "message", "Beneficiary assigned successfully",
                     "assignment", assignment
             ));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -101,6 +108,22 @@ public class AssignmentController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/asset/{assetId}")
+    public ResponseEntity<?> deleteAssignmentByAssetId(
+            Authentication authentication,
+            @PathVariable("assetId") String assetId
+    ) {
+        try {
+            String ownerId = getAuthenticatedUserId(authentication);
+            assignmentService.deleteAssignmentByAssetId(ownerId, assetId);
+            return ResponseEntity.ok(Map.of("message", "Assignment removed and asset set to unassigned"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         }
     }
 

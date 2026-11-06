@@ -1,12 +1,15 @@
 package com.legacyvault.service;
 
 import com.legacyvault.entity.SystemPolicy;
+import com.legacyvault.entity.ThirdPartyIntegration;
 import com.legacyvault.exception.AdminApiException;
 import com.legacyvault.repository.SystemPolicyRepository;
+import com.legacyvault.repository.ThirdPartyIntegrationRepository;
 import com.legacyvault.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -31,12 +34,15 @@ class AdminSettingsServiceTest {
     @Mock
     private NotificationService notificationService;
 
+    @Mock
+    private ThirdPartyIntegrationRepository thirdPartyIntegrationRepository;
+
     private AdminSettingsService adminSettingsService;
 
     @BeforeEach
     void setUp() {
         adminSettingsService = new AdminSettingsService(
-                systemPolicyRepository, userRepository, auditLogService, notificationService);
+                systemPolicyRepository, userRepository, auditLogService, notificationService, thirdPartyIntegrationRepository);
     }
 
     @Test
@@ -86,6 +92,7 @@ class AdminSettingsServiceTest {
     void listAndToggleIntegrationsWorkCorrectly() {
         when(systemPolicyRepository.findAll()).thenReturn(List.of());
         when(systemPolicyRepository.findById("integration.sms")).thenReturn(Optional.empty());
+        when(thirdPartyIntegrationRepository.findByServiceName("SMS_GATEWAY")).thenReturn(Optional.empty());
 
         List<Map<String, Object>> integrations = adminSettingsService.listIntegrations();
         assertEquals(6, integrations.size());
@@ -96,6 +103,12 @@ class AdminSettingsServiceTest {
         verify(systemPolicyRepository).save(any(SystemPolicy.class));
         verify(auditLogService).recordLog(eq("admin-1"), anyString(), eq("ADMIN"),
                 eq("INTEGRATION_CHANGED"), eq("INTEGRATION sms"), eq("SUCCESS"), eq("127.0.0.1"), anyString());
+
+        ArgumentCaptor<ThirdPartyIntegration> captor = ArgumentCaptor.forClass(ThirdPartyIntegration.class);
+        verify(thirdPartyIntegrationRepository).save(captor.capture());
+        ThirdPartyIntegration saved = captor.getValue();
+        assertEquals("SMS_GATEWAY", saved.getServiceName());
+        assertEquals("HEALTHY", saved.getStatus());
+        assertNotNull(saved.getLastSyncedAt());
     }
 }
-

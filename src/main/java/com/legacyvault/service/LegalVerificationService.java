@@ -13,11 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -72,9 +68,9 @@ public class LegalVerificationService {
             }
 
             String executorName = "Unknown Executor";
-            List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(c.getOwnerId());
-            if (!executors.isEmpty()) {
-                executorName = executors.get(0).getFullName();
+            Optional<Contact> executorOpt = findPrimaryExecutor(c.getOwnerId());
+            if (executorOpt.isPresent()) {
+                executorName = executorOpt.get().getFullName();
             }
 
             LocalDateTime dateToFormat = c.getSubmittedAt() != null ? c.getSubmittedAt() : c.getTriggeredAt();
@@ -119,12 +115,10 @@ public class LegalVerificationService {
             response.setVaultOwnerEmail(owner.getEmail());
         });
 
-        List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(c.getOwnerId());
-        if (!executors.isEmpty()) {
-            Contact executor = executors.get(0);
+        findPrimaryExecutor(c.getOwnerId()).ifPresent(executor -> {
             response.setExecutorName(executor.getFullName());
             response.setExecutorEmail(executor.getEmail());
-        }
+        });
 
         if (c.getAssignedVerifierId() != null) {
             userRepository.findById(c.getAssignedVerifierId()).ifPresent(verifier -> {
@@ -158,18 +152,21 @@ public class LegalVerificationService {
     @Transactional
     public VerificationCaseDetailResponse startReview(String caseIdOrNumber, String verifierId) {
         HandoverCase c = findCase(caseIdOrNumber);
+        String resolvedVerifierId = resolveValidVerifierUserId(verifierId, c.getOwnerId());
         c.setStatus("UNDER_REVIEW");
-        c.setAssignedVerifierId(verifierId);
+        c.setAssignedVerifierId(resolvedVerifierId);
         handoverCaseRepository.save(c);
-        logger.info("Case {} review started by verifierId={}", c.getCaseNumber(), verifierId);
+        logger.info("Case {} review started by verifierId={}", c.getCaseNumber(), resolvedVerifierId);
         return getCaseDetail(c.getCaseId());
     }
 
     @Transactional
     public ApproveCaseResponse approveCase(String caseIdOrNumber, String verifierId, ApproveCaseRequest request) {
         HandoverCase c = findCase(caseIdOrNumber);
+        String resolvedVerifierId = resolveValidVerifierUserId(verifierId, c.getOwnerId());
 
         c.setStatus("APPROVED");
+        c.setAssignedVerifierId(resolvedVerifierId);
         c.setVerifiedAt(LocalDateTime.now());
         c.setLegalVerificationSummary("Certified Court Order Verified");
         c.setClearanceStatus("CLEARANCE_GRANTED");
@@ -178,22 +175,23 @@ public class LegalVerificationService {
 
         VerificationReview review = new VerificationReview();
         review.setCaseId(c.getCaseId());
-        review.setVerifierId(verifierId != null ? verifierId : "system-verifier");
+        review.setVerifierId(resolvedVerifierId != null ? resolvedVerifierId : c.getOwnerId());
         review.setDecision("APPROVED");
         review.setDetailedExplanation(request != null ? request.getSignatureNote() : "Approved by Legal Verifier");
         review.setVerifierSignaturePayload(
                 request != null ? request.getVerifierSignaturePayload() : "SIGNED_SHA256_VALIDATED");
         verificationReviewRepository.save(review);
 
-        logger.info("Case {} APPROVED by verifierId={}", c.getCaseNumber(), verifierId);
+        logger.info("Case {} APPROVED by verifierId={}", c.getCaseNumber(), resolvedVerifierId);
 
-        // Gửi mail thông báo đến Executor — Người thụ hưởng KHÔNG nhận mail ở bước này
-        List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(c.getOwnerId());
-        if (!executors.isEmpty()) {
-            Contact executor = executors.get(0);
+        // Gửi mail thông báo đến Executor đã xác thực — Người thụ hưởng KHÔNG nhận mail ở bước này
+        Optional<Contact> executorOpt = findPrimaryExecutor(c.getOwnerId());
+        if (executorOpt.isPresent()) {
+            Contact executor = executorOpt.get();
 
             List<Contact> beneficiaryContacts = contactRepository.findByOwnerId(c.getOwnerId()).stream()
-                    .filter(contact -> Boolean.TRUE.equals(contact.getIsBeneficiary()))
+                    .filter(contact -> Boolean.TRUE.equals(contact.getIsBeneficiary())
+                            && "verified".equalsIgnoreCase(contact.getStatus()))
                     .collect(Collectors.toList());
 
             String beneficiaryEmails = beneficiaryContacts.stream()
@@ -230,29 +228,31 @@ public class LegalVerificationService {
     public VerificationCaseDetailResponse rejectCase(String caseIdOrNumber, String verifierId,
             RejectCaseRequest request) {
         HandoverCase c = findCase(caseIdOrNumber);
+        String resolvedVerifierId = resolveValidVerifierUserId(verifierId, c.getOwnerId());
         String reason = (request != null && request.getReason() != null) ? request.getReason()
                 : "Document verification failed.";
         String reasonCode = (request != null && request.getReasonCode() != null) ? request.getReasonCode()
                 : "INVALID_DOCUMENT";
 
         c.setStatus("REJECTED");
+        c.setAssignedVerifierId(resolvedVerifierId);
         c.setRejectionReason(reason);
         handoverCaseRepository.save(c);
 
         VerificationReview review = new VerificationReview();
         review.setCaseId(c.getCaseId());
-        review.setVerifierId(verifierId != null ? verifierId : "system-verifier");
+        review.setVerifierId(resolvedVerifierId != null ? resolvedVerifierId : c.getOwnerId());
         review.setDecision("REJECTED");
         review.setRejectionReasonCode(reasonCode);
         review.setDetailedExplanation(reason);
         verificationReviewRepository.save(review);
 
-        logger.warn("Case {} REJECTED by verifierId={}, reason={}", c.getCaseNumber(), verifierId, reason);
+        logger.warn("Case {} REJECTED by verifierId={}, reason={}", c.getCaseNumber(), resolvedVerifierId, reason);
 
-        // Gửi email thông báo từ chối đến Executor
-        List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(c.getOwnerId());
-        if (!executors.isEmpty()) {
-            Contact executor = executors.get(0);
+        // Gửi email thông báo từ chối đến Executor đã xác thực
+        Optional<Contact> executorOpt = findPrimaryExecutor(c.getOwnerId());
+        if (executorOpt.isPresent()) {
+            Contact executor = executorOpt.get();
             emailService.sendVerificationRejectedToExecutor(
                     executor.getEmail(),
                     executor.getFullName(),
@@ -388,6 +388,52 @@ public class LegalVerificationService {
         return getCaseDetail(c.getCaseId());
     }
 
+    /**
+     * Ưu tiên chọn Executor đã xác thực (status = 'verified'), nếu không có mới lấy Executor đầu tiên.
+     */
+    private Optional<Contact> findPrimaryExecutor(String ownerId) {
+        List<Contact> executors = contactRepository.findByOwnerIdAndIsExecutorTrue(ownerId);
+        if (executors == null || executors.isEmpty()) {
+            return Optional.empty();
+        }
+        return executors.stream()
+                .filter(c -> "verified".equalsIgnoreCase(c.getStatus()))
+                .findFirst()
+                .or(() -> Optional.of(executors.get(0)));
+    }
+
+    /**
+     * Đảm bảo verifierId luôn tương thích với khóa ngoại fk_handover_verifier và fk_review_verifier -> users(user_id).
+     */
+    private String resolveValidVerifierUserId(String verifierId, String fallbackOwnerId) {
+        boolean isPlaceholder = verifierId == null
+                || verifierId.isBlank()
+                || "verifier-demo".equalsIgnoreCase(verifierId)
+                || "system-verifier".equalsIgnoreCase(verifierId);
+
+        if (!isPlaceholder) {
+            if (verifierId.contains("@")) {
+                Optional<User> byEmail = userRepository.findByEmail(verifierId.trim());
+                if (byEmail.isPresent()) {
+                    return byEmail.get().getId();
+                }
+            }
+            return verifierId;
+        }
+
+        List<User> allUsers = userRepository.findAll();
+        if (allUsers != null && !allUsers.isEmpty()) {
+            return allUsers.stream()
+                    .filter(u -> "LEGAL_VERIFIER".equalsIgnoreCase(u.getRole())
+                            || "SYSTEM_ADMIN".equalsIgnoreCase(u.getRole()))
+                    .map(User::getId)
+                    .findFirst()
+                    .orElse(fallbackOwnerId != null ? fallbackOwnerId : allUsers.get(0).getId());
+        }
+
+        return fallbackOwnerId != null ? fallbackOwnerId : "system-verifier";
+    }
+
     private HandoverCase findCase(String caseIdOrNumber) {
         return handoverCaseRepository.findById(caseIdOrNumber)
                 .or(() -> handoverCaseRepository.findByCaseNumber(caseIdOrNumber))
@@ -408,6 +454,10 @@ public class LegalVerificationService {
                 return "Submitted";
             case "INITIATED":
                 return "Initiated";
+            case "HANDOVER_IN_PROGRESS":
+                return "Handover In Progress";
+            case "COMPLETED":
+                return "Completed";
             default:
                 return status;
         }
@@ -423,6 +473,7 @@ public class LegalVerificationService {
         return String.format(Locale.ENGLISH, "%.1f MB", bytes / (1024.0 * 1024.0));
     }
 
+    @SuppressWarnings("unused")
     private String calculateSha256(byte[] data) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

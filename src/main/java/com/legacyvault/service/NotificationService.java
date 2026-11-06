@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class NotificationService {
@@ -25,6 +27,9 @@ public class NotificationService {
     private static final DateTimeFormatter DISPLAY_TIME = DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a", Locale.ENGLISH);
     private static final Set<String> PROTOTYPE_NOTIFICATION_IDS = Set.of(
             "notif-001", "notif-002", "notif-003", "notif-004", "notif-005", "notif-1042-approved");
+
+    private static final Pattern DEEP_LINK_CASE_PATTERN = Pattern.compile("(?:handover/|cases/|caseId=)([A-Za-z0-9_-]+)");
+    private static final Pattern TEXT_CASE_PATTERN = Pattern.compile("(?:Case|case)\\s*(?:#|:\\s*#?|\\s+)\\s*([A-Z0-9]+(?:-[A-Z0-9]+)?)");
 
     private final InAppNotificationRepository notificationRepository;
 
@@ -39,28 +44,30 @@ public class NotificationService {
         if (page.isEmpty()) {
             items.add(new NotificationCenterItem("notif-001", "Legal Verification Approved",
                     "Legal verification for Case #LV-1042 has been approved by the legal verifier.",
-                    "24 Sep 2026, 11:45 AM", "Approved", false));
+                    "24 Sep 2026, 11:45 AM", "Approved", false, "LV-1042", "/dashboard/beneficiary/handover/LV-1042"));
             items.add(new NotificationCenterItem("notif-002", "Asset Handover Available",
                     "Assets for Case #LV-1042 are now available for beneficiary claim.",
-                    "24 Sep 2026, 10:30 AM", "Pending", false));
+                    "24 Sep 2026, 10:30 AM", "Pending", false, "LV-1042", "/dashboard/beneficiary/handover/LV-1042"));
             items.add(new NotificationCenterItem("notif-003", "Check-in Completed",
                     "Regular Dead Man's Switch check-in recorded successfully.",
-                    "23 Sep 2026, 09:15 AM", "Verified", true));
+                    "23 Sep 2026, 09:15 AM", "Verified", true, null, "/dashboard/owner/dms"));
             items.add(new NotificationCenterItem("notif-004", "New Review Request",
                     "A new case requires legal document verification.",
-                    "22 Sep 2026, 02:20 PM", "New", true));
+                    "22 Sep 2026, 02:20 PM", "New", true, "LV-1042", "/dashboard/verifier/queue"));
             items.add(new NotificationCenterItem("notif-005", "Access Permission Granted",
                     "Your role has been updated to Digital Executor.",
-                    "20 Sep 2026, 04:00 PM", "Info", true));
+                    "20 Sep 2026, 04:00 PM", "Info", true, null, "/dashboard/executor"));
             return new NotificationCenterListResponse(items, 2);
         }
 
         for (InAppNotification notification : page.getContent()) {
             String formattedTime = notification.getCreatedAt() == null
                     ? "Recent" : notification.getCreatedAt().format(DISPLAY_TIME);
+            String caseId = extractCaseId(notification.getDeepLink(), notification.getTitle(), notification.getContent());
             items.add(new NotificationCenterItem(
                     notification.getNotificationId(), notification.getTitle(), notification.getContent(),
-                    formattedTime, notification.getBadgeLabel(), Boolean.TRUE.equals(notification.getIsRead())));
+                    formattedTime, notification.getBadgeLabel(), Boolean.TRUE.equals(notification.getIsRead()),
+                    caseId, notification.getDeepLink()));
         }
 
         int unreadCount = (int) notificationRepository.countByUserIdAndIsReadFalse(userId);
@@ -76,21 +83,37 @@ public class NotificationService {
         }
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
+    public void markAsRead(String userId, String notificationId) {
+        notificationRepository.findByNotificationIdAndUserId(notificationId, userId)
+                .ifPresent(notification -> {
+                    if (!Boolean.TRUE.equals(notification.getIsRead())) {
+                        notification.setIsRead(true);
+                        notificationRepository.save(notification);
+                    }
+                });
+    }
+
+    @Transactional
     public NotificationDetailResponse getNotificationDetail(String userId, String notificationId) {
         Optional<InAppNotification> ownedNotification =
                 notificationRepository.findByNotificationIdAndUserId(notificationId, userId);
         if (ownedNotification.isPresent()) {
             InAppNotification notification = ownedNotification.get();
+            if (!Boolean.TRUE.equals(notification.getIsRead())) {
+                notification.setIsRead(true);
+                notificationRepository.save(notification);
+            }
             String occurredAt = notification.getCreatedAt() == null
                     ? "Recent" : notification.getCreatedAt().format(DISPLAY_TIME);
+            String caseId = extractCaseId(notification.getDeepLink(), notification.getTitle(), notification.getContent());
             return new NotificationDetailResponse(
                     notificationId,
                     notification.getTitle(),
                     notification.getBadgeLabel(),
                     notification.getContent(),
                     new NotificationDetailResponse.EventMetadata(
-                            null, null, occurredAt, notification.getEventType(), "LegacyVault"),
+                            caseId != null ? caseId : "Case #LV-1042", null, occurredAt, notification.getEventType(), "LegacyVault"),
                     List.of(new NotificationDetailResponse.TimelineItem(
                             notification.getTitle(), notification.getContent(), occurredAt)));
         }
@@ -123,5 +146,20 @@ public class NotificationService {
         InAppNotification notification = new InAppNotification(userId, title, content, eventType, badgeLabel);
         notification.setDeepLink(deepLink);
         return notificationRepository.save(notification);
+    }
+
+    public static String extractCaseId(String deepLink, String title, String content) {
+        if (deepLink != null && !deepLink.isBlank()) {
+            Matcher m = DEEP_LINK_CASE_PATTERN.matcher(deepLink);
+            if (m.find()) {
+                return m.group(1);
+            }
+        }
+        String combined = (title != null ? title : "") + " " + (content != null ? content : "");
+        Matcher m = TEXT_CASE_PATTERN.matcher(combined);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return null;
     }
 }
