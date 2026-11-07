@@ -1,0 +1,4 @@
+legacyvault:
+  chatbot:
+    openai:
+      api-key: "replace-with-your-openai-api-key"
