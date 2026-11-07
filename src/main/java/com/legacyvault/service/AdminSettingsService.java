@@ -49,7 +49,8 @@ public class AdminSettingsService {
             "kyc", "VNPT_EKYC",
             "storage", "AWS_S3_STORAGE",
             "esign", "DIGITAL_SIGNATURE",
-            "enotary", "ELECTRONIC_NOTARY"
+            "enotary", "ELECTRONIC_NOTARY",
+            "ai-assistant", "AI_ASSISTANT"
     );
 
     private final SystemPolicyRepository systemPolicyRepository;
@@ -252,7 +253,8 @@ public class AdminSettingsService {
                 integrationItem("kyc", "KYC / eKYC provider", "IDENTITY", true, saved),
                 integrationItem("storage", "Cloud backup storage", "BACKUP", true, saved),
                 integrationItem("esign", "Digital signature service", "LEGAL", false, saved),
-                integrationItem("enotary", "Electronic notary portal", "LEGAL", false, saved)
+                integrationItem("enotary", "Electronic notary portal", "LEGAL", false, saved),
+                integrationItem("ai-assistant", "AI Assistant", "AI", false, saved)
         );
         return defaults;
     }
@@ -263,7 +265,7 @@ public class AdminSettingsService {
             throw AdminApiException.badRequest("Integration id and enabled status are required.");
         }
         String cleanId = id.trim().toLowerCase(Locale.ROOT);
-        Set<String> validIds = Set.of("email", "sms", "kyc", "storage", "esign", "enotary");
+        Set<String> validIds = Set.of("email", "sms", "kyc", "storage", "esign", "enotary", "ai-assistant");
         if (!validIds.contains(cleanId)) {
             throw AdminApiException.notFound("Integration was not found.");
         }

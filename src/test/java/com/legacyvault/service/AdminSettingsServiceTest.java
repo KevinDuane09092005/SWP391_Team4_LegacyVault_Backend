@@ -93,22 +93,37 @@ class AdminSettingsServiceTest {
         when(systemPolicyRepository.findAll()).thenReturn(List.of());
         when(systemPolicyRepository.findById("integration.sms")).thenReturn(Optional.empty());
         when(thirdPartyIntegrationRepository.findByServiceName("SMS_GATEWAY")).thenReturn(Optional.empty());
+        when(systemPolicyRepository.findById("integration.ai-assistant")).thenReturn(Optional.empty());
+        when(thirdPartyIntegrationRepository.findByServiceName("AI_ASSISTANT")).thenReturn(Optional.empty());
 
         List<Map<String, Object>> integrations = adminSettingsService.listIntegrations();
-        assertEquals(6, integrations.size());
+        assertEquals(7, integrations.size());
         assertEquals("email", integrations.get(0).get("id"));
         assertEquals(true, integrations.get(0).get("enabled"));
+        assertEquals("ai-assistant", integrations.get(6).get("id"));
+        assertEquals(false, integrations.get(6).get("enabled"));
 
         adminSettingsService.updateIntegration("admin-1", "sms", true, "127.0.0.1");
         verify(systemPolicyRepository).save(any(SystemPolicy.class));
         verify(auditLogService).recordLog(eq("admin-1"), anyString(), eq("ADMIN"),
                 eq("INTEGRATION_CHANGED"), eq("INTEGRATION sms"), eq("SUCCESS"), eq("127.0.0.1"), anyString());
 
+        assertDoesNotThrow(() -> adminSettingsService.updateIntegration("admin-1", "ai-assistant", true, "127.0.0.1"));
+        verify(auditLogService).recordLog(eq("admin-1"), anyString(), eq("ADMIN"),
+                eq("INTEGRATION_CHANGED"), eq("INTEGRATION ai-assistant"), eq("SUCCESS"), eq("127.0.0.1"), anyString());
+
         ArgumentCaptor<ThirdPartyIntegration> captor = ArgumentCaptor.forClass(ThirdPartyIntegration.class);
-        verify(thirdPartyIntegrationRepository).save(captor.capture());
-        ThirdPartyIntegration saved = captor.getValue();
-        assertEquals("SMS_GATEWAY", saved.getServiceName());
-        assertEquals("HEALTHY", saved.getStatus());
-        assertNotNull(saved.getLastSyncedAt());
+        verify(thirdPartyIntegrationRepository, times(2)).save(captor.capture());
+        Map<String, ThirdPartyIntegration> savedByService = new HashMap<>();
+        for (ThirdPartyIntegration saved : captor.getAllValues()) {
+            savedByService.put(saved.getServiceName(), saved);
+        }
+        ThirdPartyIntegration sms = savedByService.get("SMS_GATEWAY");
+        assertEquals("HEALTHY", sms.getStatus());
+        assertNotNull(sms.getLastSyncedAt());
+
+        ThirdPartyIntegration aiAssistant = savedByService.get("AI_ASSISTANT");
+        assertEquals("AI_ASSISTANT", aiAssistant.getServiceName());
+        assertEquals("HEALTHY", aiAssistant.getStatus());
     }
 }
