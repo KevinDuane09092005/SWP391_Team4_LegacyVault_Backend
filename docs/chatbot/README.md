@@ -4,7 +4,7 @@ The chatbot uses OpenAI's Responses API from the Spring Boot backend. The API ke
 
 ## Configure locally
 
-For the easiest local setup, copy `application-local.example.yml` to `application-local.yml` in the backend project root and replace the placeholder with your API key. The local file is automatically loaded when Spring Boot starts and is ignored by Git.
+For the easiest local setup, replace `PASTE_OPENAI_API_KEY_HERE` in `application-local.yml` in the backend project root with your API key. Spring Boot loads this file automatically when it starts.
 
 Alternatively, set the key in the PowerShell window used to start the backend:
 
