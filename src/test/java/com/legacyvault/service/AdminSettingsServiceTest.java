@@ -2,6 +2,7 @@ package com.legacyvault.service;
 
 import com.legacyvault.entity.SystemPolicy;
 import com.legacyvault.entity.ThirdPartyIntegration;
+import com.legacyvault.entity.User;
 import com.legacyvault.exception.AdminApiException;
 import com.legacyvault.repository.SystemPolicyRepository;
 import com.legacyvault.repository.ThirdPartyIntegrationRepository;
@@ -64,8 +65,46 @@ class AdminSettingsServiceTest {
 
     @Test
     void lockedAdminPermissionCannotBeRemoved() {
-        assertThrows(AdminApiException.class,
+        AdminApiException ex = assertThrows(AdminApiException.class,
                 () -> adminSettingsService.updatePermission("admin-1", "SYSTEM_ADMIN", "admin.dashboard", false, "127.0.0.1"));
+        assertEquals("LOCKED_PERMISSION", ex.getCode());
+    }
+
+    @Test
+    void updatePermissionNotifiesAffectedUsers() {
+        User verifier = new User();
+        verifier.setId("ver-1");
+        verifier.setRole("legal_verifier");
+        when(systemPolicyRepository.findAll()).thenReturn(List.of());
+        when(systemPolicyRepository.findById(anyString())).thenReturn(Optional.empty());
+        when(userRepository.findAll()).thenReturn(List.of(verifier));
+
+        adminSettingsService.updatePermission("admin-1", "LEGAL_VERIFIER", "audit.view", true, "127.0.0.1");
+
+        verify(notificationService).createNotification(
+                eq("ver-1"),
+                eq("Role permissions updated"),
+                contains("audit.view"),
+                eq("PERMISSIONS_CHANGED"),
+                eq("Info"),
+                eq("/dashboard"));
+    }
+
+    @Test
+    void listIntegrationsReflectsThirdPartyIntegrationsTableState() {
+        ThirdPartyIntegration aiDbRow = new ThirdPartyIntegration(
+                "AI_ASSISTANT", "HEALTHY", "{\"enabled\":true,\"id\":\"ai-assistant\"}");
+        when(systemPolicyRepository.findAll()).thenReturn(List.of());
+        when(thirdPartyIntegrationRepository.findAll()).thenReturn(List.of(aiDbRow));
+
+        List<Map<String, Object>> integrations = adminSettingsService.listIntegrations();
+        Map<String, Object> ai = integrations.stream()
+                .filter(i -> "ai-assistant".equals(i.get("id")))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(true, ai.get("enabled"));
+        assertEquals("HEALTHY", ai.get("connectionStatus"));
     }
 
     @Test

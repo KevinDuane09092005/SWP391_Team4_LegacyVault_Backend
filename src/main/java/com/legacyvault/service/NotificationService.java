@@ -64,10 +64,12 @@ public class NotificationService {
             String formattedTime = notification.getCreatedAt() == null
                     ? "Recent" : notification.getCreatedAt().format(DISPLAY_TIME);
             String caseId = extractCaseId(notification.getDeepLink(), notification.getTitle(), notification.getContent());
-            items.add(new NotificationCenterItem(
+            NotificationCenterItem item = new NotificationCenterItem(
                     notification.getNotificationId(), notification.getTitle(), notification.getContent(),
                     formattedTime, notification.getBadgeLabel(), Boolean.TRUE.equals(notification.getIsRead()),
-                    caseId, notification.getDeepLink()));
+                    caseId, notification.getDeepLink());
+            item.setEventType(notification.getEventType());
+            items.add(item);
         }
 
         int unreadCount = (int) notificationRepository.countByUserIdAndIsReadFalse(userId);

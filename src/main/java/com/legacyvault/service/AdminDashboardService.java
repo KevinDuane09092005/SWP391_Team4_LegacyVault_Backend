@@ -2,6 +2,7 @@ package com.legacyvault.service;
 
 import com.legacyvault.dto.AdminDashboardResponse;
 import com.legacyvault.entity.AccessRequest;
+import com.legacyvault.entity.InAppNotification;
 import com.legacyvault.entity.User;
 import com.legacyvault.exception.AdminApiException;
 import com.legacyvault.repository.AccessRequestRepository;
@@ -56,7 +57,8 @@ public class AdminDashboardService {
         List<AdminDashboardResponse.UserPreviewItem> usersPreview = new ArrayList<>();
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
 
-        List<User> users = userRepository.findAll();
+        List<User> users = new ArrayList<>(userRepository.findAll());
+        users.sort(Comparator.comparing(User::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())));
         for (User u : users.subList(0, Math.min(users.size(), 4))) {
             String created = u.getCreatedAt() != null ? u.getCreatedAt().format(dtf) : "—";
             usersPreview.add(new AdminDashboardResponse.UserPreviewItem(
@@ -72,11 +74,12 @@ public class AdminDashboardService {
         List<AccessRequest> pendingRequests = accessRequestRepository.findByStatusOrderByCreatedAtDesc("PENDING");
         for (AccessRequest req : pendingRequests) {
             String reqDate = req.getCreatedAt() != null ? req.getCreatedAt().format(dtf) : "—";
+            String caseId = NotificationService.extractCaseId(null, null, req.getPurpose());
             requestsQueue.add(new AdminDashboardResponse.AccessRequestQueueItem(
                     req.getRequestId(),
                     req.getRequesterName(),
                     req.getRequestedRole() + ", " + req.getPurpose(),
-                    req.getPurpose(),
+                    caseId,
                     reqDate,
                     req.getStatus() != null ? req.getStatus().toUpperCase(Locale.ROOT) : "PENDING"));
         }
@@ -102,6 +105,24 @@ public class AdminDashboardService {
         req.setReviewedBy(adminUserId);
         req.setReviewedAt(LocalDateTime.now());
         accessRequestRepository.save(req);
+
+        String storedRole = toStoredRole(req.getRequestedRole());
+        if (req.getRequesterEmail() != null && !req.getRequesterEmail().isBlank()) {
+            userRepository.findByEmail(req.getRequesterEmail().trim()).ifPresent(requester -> {
+                if (storedRole != null) {
+                    requester.setRole(storedRole);
+                    userRepository.save(requester);
+                }
+                notificationRepository.save(new InAppNotification(
+                        requester.getId(),
+                        "Access request approved",
+                        "An administrator approved your access request for role " + toApiRole(req.getRequestedRole()) + ".",
+                        "ACCOUNT_ROLE_CHANGED",
+                        "Approved"
+                ));
+            });
+        }
+
         recordRequestDecision(adminUserId, req, "ACCESS_REQUEST_APPROVED");
         logger.info("Admin {} approved access request {}", adminUserId, requestId);
     }
@@ -113,25 +134,50 @@ public class AdminDashboardService {
         req.setReviewedBy(adminUserId);
         req.setReviewedAt(LocalDateTime.now());
         accessRequestRepository.save(req);
+
+        if (req.getRequesterEmail() != null && !req.getRequesterEmail().isBlank()) {
+            userRepository.findByEmail(req.getRequesterEmail().trim()).ifPresent(requester ->
+                    notificationRepository.save(new InAppNotification(
+                            requester.getId(),
+                            "Access request rejected",
+                            "An administrator rejected your access request for role " + toApiRole(req.getRequestedRole()) + ".",
+                            "ACCOUNT_STATUS_CHANGED",
+                            "Rejected"
+                    ))
+            );
+        }
+
         recordRequestDecision(adminUserId, req, "ACCESS_REQUEST_REJECTED");
         logger.info("Admin {} rejected access request {}", adminUserId, requestId);
     }
 
     private AccessRequest getPendingRequest(String requestId) {
         AccessRequest request = accessRequestRepository.findById(requestId)
-                .orElseThrow(() -> AdminApiException.notFound("Access request was not found."));
+                .orElseThrow(() -> AdminApiException.notFound("NOT_FOUND", "Access request was not found."));
         if (!"PENDING".equalsIgnoreCase(request.getStatus())) {
-            throw AdminApiException.conflict("This access request has already been reviewed.");
+            throw AdminApiException.conflict("ALREADY_REVIEWED", "This access request has already been reviewed.");
         }
         return request;
     }
 
     private void recordRequestDecision(String adminUserId, AccessRequest request, String action) {
         User admin = userRepository.findById(adminUserId)
-                .orElseThrow(() -> AdminApiException.notFound("Administrator account was not found."));
+                .orElseThrow(() -> AdminApiException.notFound("NOT_FOUND", "Administrator account was not found."));
         auditLogService.recordLog(admin.getId(), admin.getFullName(), toApiRole(admin.getRole()), action,
                 "Access request " + request.getRequestId(), "SUCCESS", null,
                 "Request for " + request.getRequestedRole() + " reviewed as " + request.getStatus());
+    }
+
+    private String toStoredRole(String requestedRole) {
+        if (requestedRole == null || requestedRole.isBlank()) return null;
+        return switch (requestedRole.trim().toUpperCase(Locale.ROOT)) {
+            case "ADMIN", "SYSTEM_ADMIN" -> "admin";
+            case "VAULT_OWNER" -> "vault_owner";
+            case "EXECUTOR", "DIGITAL_EXECUTOR" -> "digital_executor";
+            case "BENEFICIARY" -> "beneficiary";
+            case "LEGAL_VERIFIER" -> "legal_verifier";
+            default -> null;
+        };
     }
 
     private String effectiveStatus(User user) {

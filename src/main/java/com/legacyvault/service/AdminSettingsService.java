@@ -106,7 +106,7 @@ public class AdminSettingsService {
         }
         String cleanPerm = permission.trim();
         if (!granted && "SYSTEM_ADMIN".equals(canonicalRole) && LOCKED_ADMIN_PERMISSIONS.contains(cleanPerm)) {
-            throw AdminApiException.badRequest("Locked administrator permissions cannot be removed.");
+            throw AdminApiException.badRequest("LOCKED_PERMISSION", "Locked administrator permissions cannot be removed.");
         }
 
         Map<String, List<String>> matrix = loadPermissionMatrix();
@@ -124,7 +124,36 @@ public class AdminSettingsService {
         recordAdminAudit(adminId, "PERMISSION_CHANGED", "Role " + canonicalRole, ipAddress,
                 "Permission " + cleanPerm + " set to " + granted + " for " + canonicalRole);
 
+        notifyRoleUsersPermissionChanged(adminId, canonicalRole, cleanPerm, granted);
+
         return loadPermissionMatrix();
+    }
+
+    private void notifyRoleUsersPermissionChanged(String adminId, String canonicalRole, String permission, boolean granted) {
+        if (notificationService == null || userRepository == null) {
+            return;
+        }
+        List<User> allUsers = userRepository.findAll();
+        if (allUsers == null || allUsers.isEmpty()) {
+            return;
+        }
+        String actionText = granted ? "granted" : "removed";
+        for (User user : allUsers) {
+            if (user == null || user.getId() == null || Objects.equals(user.getId(), adminId)) {
+                continue;
+            }
+            String userCanonical = user.getRole() != null ? normalizeCanonicalRole(user.getRole()) : "VAULT_OWNER";
+            if (canonicalRole.equals(userCanonical)) {
+                notificationService.createNotification(
+                        user.getId(),
+                        "Role permissions updated",
+                        "An administrator " + actionText + " permission \"" + permission + "\" for role " + canonicalRole + ".",
+                        "PERMISSIONS_CHANGED",
+                        granted ? "Info" : "Warning",
+                        "/dashboard"
+                );
+            }
+        }
     }
 
     private Map<String, List<String>> loadPermissionMatrix() {
@@ -247,14 +276,22 @@ public class AdminSettingsService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> listIntegrations() {
         Map<String, String> saved = loadAllPolicyValues();
+        Map<String, ThirdPartyIntegration> dbByService = new HashMap<>();
+        if (thirdPartyIntegrationRepository != null) {
+            for (ThirdPartyIntegration integration : thirdPartyIntegrationRepository.findAll()) {
+                if (integration.getServiceName() != null) {
+                    dbByService.put(integration.getServiceName().toUpperCase(Locale.ROOT), integration);
+                }
+            }
+        }
         List<Map<String, Object>> defaults = List.of(
-                integrationItem("email", "E-mail provider", "NOTIFICATION", true, saved),
-                integrationItem("sms", "SMS gateway", "NOTIFICATION", false, saved),
-                integrationItem("kyc", "KYC / eKYC provider", "IDENTITY", true, saved),
-                integrationItem("storage", "Cloud backup storage", "BACKUP", true, saved),
-                integrationItem("esign", "Digital signature service", "LEGAL", false, saved),
-                integrationItem("enotary", "Electronic notary portal", "LEGAL", false, saved),
-                integrationItem("ai-assistant", "AI Assistant", "AI", false, saved)
+                integrationItem("email", "E-mail provider", "NOTIFICATION", true, saved, dbByService),
+                integrationItem("sms", "SMS gateway", "NOTIFICATION", false, saved, dbByService),
+                integrationItem("kyc", "KYC / eKYC provider", "IDENTITY", true, saved, dbByService),
+                integrationItem("storage", "Cloud backup storage", "BACKUP", true, saved, dbByService),
+                integrationItem("esign", "Digital signature service", "LEGAL", false, saved, dbByService),
+                integrationItem("enotary", "Electronic notary portal", "LEGAL", false, saved, dbByService),
+                integrationItem("ai-assistant", "AI Assistant", "AI", false, saved, dbByService)
         );
         return defaults;
     }
@@ -262,12 +299,12 @@ public class AdminSettingsService {
     @Transactional
     public List<Map<String, Object>> updateIntegration(String adminId, String id, Boolean enabled, String ipAddress) {
         if (id == null || id.isBlank() || enabled == null) {
-            throw AdminApiException.badRequest("Integration id and enabled status are required.");
+            throw AdminApiException.badRequest("INVALID_INPUT", "Integration id and enabled status are required.");
         }
         String cleanId = id.trim().toLowerCase(Locale.ROOT);
         Set<String> validIds = Set.of("email", "sms", "kyc", "storage", "esign", "enotary", "ai-assistant");
         if (!validIds.contains(cleanId)) {
-            throw AdminApiException.notFound("Integration was not found.");
+            throw AdminApiException.notFound("NOT_FOUND", "Integration was not found.");
         }
 
         savePolicyValue("integration." + cleanId, String.valueOf(enabled), "Integration " + cleanId + " enabled status", adminId);
@@ -296,14 +333,43 @@ public class AdminSettingsService {
         thirdPartyIntegrationRepository.save(integration);
     }
 
-    private Map<String, Object> integrationItem(String id, String name, String category, boolean defaultEnabled, Map<String, String> saved) {
-        boolean enabled = parseBooleanOrDefault(saved.get("integration." + id), defaultEnabled);
+    private Map<String, Object> integrationItem(String id, String name, String category, boolean defaultEnabled,
+                                                Map<String, String> saved, Map<String, ThirdPartyIntegration> dbByService) {
+        String serviceName = SERVICE_NAME_MAPPING.getOrDefault(id, id.toUpperCase(Locale.ROOT));
+        ThirdPartyIntegration dbRow = dbByService.get(serviceName);
+        boolean enabled;
+        if (dbRow != null) {
+            enabled = resolveEnabledFromIntegrationRow(dbRow, saved.get("integration." + id), defaultEnabled);
+        } else {
+            enabled = parseBooleanOrDefault(saved.get("integration." + id), defaultEnabled);
+        }
+        String connectionStatus = dbRow != null && dbRow.getStatus() != null && !dbRow.getStatus().isBlank()
+                ? dbRow.getStatus().toUpperCase(Locale.ROOT)
+                : (enabled ? "HEALTHY" : "DOWN");
+
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id", id);
         item.put("name", name);
         item.put("category", category);
         item.put("enabled", enabled);
+        item.put("connectionStatus", connectionStatus);
         return item;
+    }
+
+    private boolean resolveEnabledFromIntegrationRow(ThirdPartyIntegration row, String savedPolicyValue, boolean fallback) {
+        String metadata = row.getConfigMetadata();
+        if (metadata != null) {
+            String compact = metadata.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+            if (compact.contains("\"enabled\":true")) return true;
+            if (compact.contains("\"enabled\":false")) return false;
+        }
+        if (savedPolicyValue != null && !savedPolicyValue.isBlank()) {
+            return parseBooleanOrDefault(savedPolicyValue, fallback);
+        }
+        if (row.getStatus() != null && !row.getStatus().isBlank()) {
+            return !"DOWN".equalsIgnoreCase(row.getStatus().trim());
+        }
+        return fallback;
     }
 
     // ---------------- Helpers ----------------

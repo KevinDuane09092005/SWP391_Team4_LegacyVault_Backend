@@ -119,16 +119,16 @@ public class AdminUserService {
 
     private User getTargetAndCheckSelfChange(String adminId, String userId) {
         if (adminId != null && adminId.equals(userId)) {
-            throw AdminApiException.badRequest("You cannot change your own account.");
+            throw AdminApiException.badRequest("SELF_CHANGE", "You cannot change your own account.");
         }
         return userRepository.findById(userId)
-                .orElseThrow(() -> AdminApiException.notFound("User was not found."));
+                .orElseThrow(() -> AdminApiException.notFound("NOT_FOUND", "User was not found."));
     }
 
     private void recordChange(String adminId, User target, String action,
                               String previousValue, String nextValue, String ipAddress) {
         User admin = userRepository.findById(adminId)
-                .orElseThrow(() -> AdminApiException.notFound("Administrator account was not found."));
+                .orElseThrow(() -> AdminApiException.notFound("NOT_FOUND", "Administrator account was not found."));
         String detail = "Changed " + action + " from " + previousValue + " to " + nextValue;
         auditLogService.recordLog(
                 admin.getId(), admin.getFullName(), toApiRole(admin.getRole()), action,
