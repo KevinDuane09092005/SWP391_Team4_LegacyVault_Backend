@@ -34,14 +34,22 @@ public class AuditLogRow {
     @JsonProperty("ip_address")
     private String ipAddress;
 
+    @JsonProperty("details")
+    private String details;
+
     public AuditLogRow() {}
 
     public AuditLogRow(String timeFormatted, String user, String action, String target, String status, String ipAddress) {
-        this(null, timeFormatted, timeFormatted, user, "SYSTEM", action, target, status, ipAddress);
+        this(null, timeFormatted, timeFormatted, user, "SYSTEM", action, target, status, ipAddress, null);
     }
 
     public AuditLogRow(String logId, String timestampFormatted, String timeFormatted, String user, String role,
                        String action, String target, String status, String ipAddress) {
+        this(logId, timestampFormatted, timeFormatted, user, role, action, target, status, ipAddress, null);
+    }
+
+    public AuditLogRow(String logId, String timestampFormatted, String timeFormatted, String user, String role,
+                       String action, String target, String status, String ipAddress, String details) {
         this.logId = logId;
         this.timestampFormatted = timestampFormatted;
         this.timeFormatted = timeFormatted;
@@ -51,6 +59,7 @@ public class AuditLogRow {
         this.target = target;
         this.status = status;
         this.ipAddress = ipAddress;
+        this.details = details;
     }
 
     public String getLogId() {
@@ -132,5 +141,13 @@ public class AuditLogRow {
 
     public void setIpAddress(String ipAddress) {
         this.ipAddress = ipAddress;
+    }
+
+    public String getDetails() {
+        return details;
+    }
+
+    public void setDetails(String details) {
+        this.details = details;
     }
 }

@@ -91,6 +91,7 @@ class AdminUserServiceTest {
         AdminApiException ex = assertThrows(AdminApiException.class,
                 () -> adminUserService.updateStatus("admin-1", "admin-1", "SUSPENDED", null));
         assertEquals(400, ex.getStatus().value());
+        assertEquals("SELF_CHANGE", ex.getCode());
         verify(userRepository, never()).findById(anyString());
     }
 

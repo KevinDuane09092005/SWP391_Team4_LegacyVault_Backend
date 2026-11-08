@@ -36,6 +36,7 @@ class AuditLogServiceTest {
         mockLog = new AuditLog("usr-1", "Alex Mercier", "LEGAL_VERIFIER",
                 "Approve Legal Verification", "Case #LV-1042", "SUCCESS", "192.168.1.42");
         mockLog.setLogId("log-001");
+        mockLog.setDetails("Approved after reviewing death certificate");
         mockLog.setCurrentHashSha256("current-hash-val");
     }
 
@@ -70,6 +71,8 @@ class AuditLogServiceTest {
         assertEquals("LEGAL_VERIFIER", response.getLogs().get(0).getUserObject().get("role"));
         assertEquals("Approve Legal Verification", response.getLogs().get(0).getAction());
         assertEquals("SUCCESS", response.getLogs().get(0).getStatus());
+        assertEquals("192.168.1.42", response.getLogs().get(0).getIpAddress());
+        assertEquals("Approved after reviewing death certificate", response.getLogs().get(0).getDetails());
     }
 
     @Test

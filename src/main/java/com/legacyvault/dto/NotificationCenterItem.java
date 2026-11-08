@@ -35,6 +35,10 @@ public class NotificationCenterItem {
     @JsonAlias("deepLink")
     private String deepLink;
 
+    @JsonProperty("event_type")
+    @JsonAlias("eventType")
+    private String eventType;
+
     public NotificationCenterItem() {}
 
     public NotificationCenterItem(String notificationId, String title, String subtext,
@@ -117,5 +121,13 @@ public class NotificationCenterItem {
 
     public void setDeepLink(String deepLink) {
         this.deepLink = deepLink;
+    }
+
+    public String getEventType() {
+        return eventType;
+    }
+
+    public void setEventType(String eventType) {
+        this.eventType = eventType;
     }
 }

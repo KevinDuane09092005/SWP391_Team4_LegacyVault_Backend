@@ -105,7 +105,8 @@ public class AuditLogService {
                     log.getAction(),
                     log.getTarget(),
                     log.getStatus(),
-                    log.getIpAddress() != null ? log.getIpAddress() : "127.0.0.1"));
+                    log.getIpAddress() != null ? log.getIpAddress() : "127.0.0.1",
+                    log.getDetails()));
         }
 
         long total = resultPage.getTotalElements();
@@ -121,22 +122,44 @@ public class AuditLogService {
 
     @Transactional(readOnly = true)
     public byte[] exportCsv(String fromDate, String toDate) {
+        return exportCsv(null, "ALL", "ALL", "ALL", fromDate, toDate);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportCsv(String search, String role, String action, String status, String fromDate, String toDate) {
         LocalDateTime from = parseDate(fromDate, false);
         LocalDateTime to = parseDate(toDate, true);
         if (from != null && to != null && to.isBefore(from)) {
             throw new IllegalArgumentException("The end date must be on or after the start date.");
         }
 
+        String normalizedSearch = (search != null && !search.isBlank()) ? search.trim() : null;
+        String normalizedRole = normalizeFilter(role);
+        String normalizedAction = normalizeFilter(action);
+        String normalizedStatus = normalizeFilter(status);
+
+        boolean hasExtraFilters = normalizedSearch != null
+                || !"ALL".equals(normalizedRole)
+                || !"ALL".equals(normalizedAction)
+                || !"ALL".equals(normalizedStatus);
+
+        List<AuditLog> logs = hasExtraFilters
+                ? auditLogRepository.findLogsForExportFiltered(
+                        normalizedSearch, normalizedRole, normalizedAction, normalizedStatus, from, to)
+                : auditLogRepository.findLogsForExport(from, to);
+
         StringBuilder csv = new StringBuilder();
-        csv.append("TIME,USER,ACTION,TARGET,STATUS,IP_ADDRESS\n");
+        csv.append("TIME,USER,ACTION,TARGET,STATUS,IP_ADDRESS,ROLE,DETAILS\n");
         DateTimeFormatter csvTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-        for (AuditLog log : auditLogRepository.findLogsForExport(from, to)) {
+        for (AuditLog log : logs) {
             csv.append(csvEscape(log.getCreatedAt() == null ? "" : log.getCreatedAt().format(csvTime))).append(',')
                     .append(csvEscape(log.getUserName())).append(',')
                     .append(csvEscape(log.getAction())).append(',')
                     .append(csvEscape(log.getTarget())).append(',')
                     .append(csvEscape(log.getStatus())).append(',')
-                    .append(csvEscape(log.getIpAddress())).append('\n');
+                    .append(csvEscape(log.getIpAddress())).append(',')
+                    .append(csvEscape(log.getUserRole())).append(',')
+                    .append(csvEscape(log.getDetails())).append('\n');
         }
 
         return csv.toString().getBytes(StandardCharsets.UTF_8);

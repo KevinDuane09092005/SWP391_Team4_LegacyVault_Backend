@@ -2,6 +2,7 @@ package com.legacyvault.service;
 
 import com.legacyvault.dto.AdminDashboardResponse;
 import com.legacyvault.entity.AccessRequest;
+import com.legacyvault.entity.InAppNotification;
 import com.legacyvault.entity.User;
 import com.legacyvault.exception.AdminApiException;
 import com.legacyvault.repository.AccessRequestRepository;
@@ -111,11 +112,36 @@ class AdminDashboardServiceTest {
     }
 
     @Test
+    void testApproveAccessRequestUpdatesExistingUserRoleAndNotifies() {
+        User admin = new User();
+        admin.setId("admin-1");
+        admin.setFullName("Admin User");
+        admin.setRole("admin");
+
+        User requester = new User();
+        requester.setId("user-2");
+        requester.setEmail("anthony@executor.com");
+        requester.setRole("vault_owner");
+
+        when(accessRequestRepository.findById("req-01")).thenReturn(Optional.of(mockRequest));
+        when(userRepository.findById("admin-1")).thenReturn(Optional.of(admin));
+        when(userRepository.findByEmail("anthony@executor.com")).thenReturn(Optional.of(requester));
+
+        adminDashboardService.approveAccessRequest("req-01", "admin-1");
+
+        assertEquals("APPROVED", mockRequest.getStatus());
+        assertEquals("digital_executor", requester.getRole());
+        verify(userRepository).save(requester);
+        verify(notificationRepository).save(any(InAppNotification.class));
+    }
+
+    @Test
     void testUnknownAccessRequestIsNotSilentlyApproved() {
         when(accessRequestRepository.findById("missing")).thenReturn(Optional.empty());
 
-        assertThrows(AdminApiException.class,
+        AdminApiException ex = assertThrows(AdminApiException.class,
                 () -> adminDashboardService.approveAccessRequest("missing", "admin-1"));
+        assertEquals("NOT_FOUND", ex.getCode());
         verify(accessRequestRepository, never()).save(any());
     }
 }

@@ -18,10 +18,12 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, String> {
     Optional<AuditLog> findTopByOrderByCreatedAtDesc();
 
     @Query("SELECT a FROM AuditLog a WHERE " +
-           "(:role IS NULL OR :role = 'ALL' OR UPPER(a.userRole) = UPPER(:role)) AND " +
+           "(:role IS NULL OR :role = 'ALL' OR UPPER(a.userRole) = UPPER(:role) " +
+           "OR (UPPER(:role) IN ('ADMIN', 'SYSTEM_ADMIN') AND UPPER(a.userRole) IN ('ADMIN', 'SYSTEM_ADMIN')) " +
+           "OR (UPPER(:role) IN ('EXECUTOR', 'DIGITAL_EXECUTOR') AND UPPER(a.userRole) IN ('EXECUTOR', 'DIGITAL_EXECUTOR'))) AND " +
            "(:action IS NULL OR :action = 'ALL' OR a.action = :action) AND " +
            "(:status IS NULL OR :status = 'ALL' OR UPPER(a.status) = UPPER(:status)) AND " +
-           "(:search IS NULL OR LOWER(a.target) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.userName) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.action) LIKE LOWER(CONCAT('%', :search, '%'))) AND " +
+           "(:search IS NULL OR LOWER(a.target) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.userName) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.action) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(COALESCE(a.details, '')) LIKE LOWER(CONCAT('%', :search, '%'))) AND " +
            "(:fromDate IS NULL OR a.createdAt >= :fromDate) AND " +
            "(:toDate IS NULL OR a.createdAt <= :toDate) " +
            "ORDER BY a.createdAt DESC")
@@ -53,6 +55,24 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, String> {
             "(:toDate IS NULL OR a.createdAt <= :toDate) " +
             "ORDER BY a.createdAt DESC")
     List<AuditLog> findLogsForExport(
+            @Param("fromDate") LocalDateTime fromDate,
+            @Param("toDate") LocalDateTime toDate);
+
+    @Query("SELECT a FROM AuditLog a WHERE " +
+            "(:role IS NULL OR :role = 'ALL' OR UPPER(a.userRole) = UPPER(:role) " +
+            "OR (UPPER(:role) IN ('ADMIN', 'SYSTEM_ADMIN') AND UPPER(a.userRole) IN ('ADMIN', 'SYSTEM_ADMIN')) " +
+            "OR (UPPER(:role) IN ('EXECUTOR', 'DIGITAL_EXECUTOR') AND UPPER(a.userRole) IN ('EXECUTOR', 'DIGITAL_EXECUTOR'))) AND " +
+            "(:action IS NULL OR :action = 'ALL' OR a.action = :action) AND " +
+            "(:status IS NULL OR :status = 'ALL' OR UPPER(a.status) = UPPER(:status)) AND " +
+            "(:search IS NULL OR LOWER(a.target) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.userName) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(a.action) LIKE LOWER(CONCAT('%', :search, '%')) OR LOWER(COALESCE(a.details, '')) LIKE LOWER(CONCAT('%', :search, '%'))) AND " +
+            "(:fromDate IS NULL OR a.createdAt >= :fromDate) AND " +
+            "(:toDate IS NULL OR a.createdAt <= :toDate) " +
+            "ORDER BY a.createdAt DESC")
+    List<AuditLog> findLogsForExportFiltered(
+            @Param("search") String search,
+            @Param("role") String role,
+            @Param("action") String action,
+            @Param("status") String status,
             @Param("fromDate") LocalDateTime fromDate,
             @Param("toDate") LocalDateTime toDate);
 }

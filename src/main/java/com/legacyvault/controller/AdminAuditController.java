@@ -38,9 +38,13 @@ public class AdminAuditController {
 
     @GetMapping(value = "/audit-logs/export-csv", produces = "text/csv")
     public ResponseEntity<byte[]> exportAuditLogsCsv(
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "ALL") String role,
+            @RequestParam(defaultValue = "ALL") String action,
+            @RequestParam(defaultValue = "ALL") String status,
             @RequestParam(name = "from_date", required = false) String fromDate,
             @RequestParam(name = "to_date", required = false) String toDate) {
-        byte[] csvData = auditLogService.exportCsv(fromDate, toDate);
+        byte[] csvData = auditLogService.exportCsv(search, role, action, status, fromDate, toDate);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"audit-logs-export.csv\"")
                 .contentType(MediaType.parseMediaType("text/csv"))
