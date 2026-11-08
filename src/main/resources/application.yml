@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:file:./application-local.yml
   application:
     name: LegacyVault
   servlet:
@@ -48,6 +50,17 @@ face-verification:
 storage:
   local:
     base-dir: uploads
+
+legacyvault:
+  chatbot:
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-6-luna}
+      timeout: ${OPENAI_TIMEOUT:20s}
+      max-output-tokens: 700
+      messages-per-minute: 20
+      suggestions-per-minute: 360
 
 dms:
   scheduler:

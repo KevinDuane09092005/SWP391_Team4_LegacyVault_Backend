@@ -1,5 +1,6 @@
 package com.legacyvault.config;
 
+import com.legacyvault.chatbot.controller.ChatbotAuthenticationEntryPoint;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -9,6 +10,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -21,9 +23,12 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
+    private final ChatbotAuthenticationEntryPoint chatbotAuthenticationEntryPoint;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter) {
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter,
+                          ChatbotAuthenticationEntryPoint chatbotAuthenticationEntryPoint) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.chatbotAuthenticationEntryPoint = chatbotAuthenticationEntryPoint;
     }
 
     @Bean
@@ -66,6 +71,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/plans", "/api/v1/assets/documents/**").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SYSTEM_ADMIN")
                         .anyRequest().authenticated())
+                .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
+                        chatbotAuthenticationEntryPoint,
+                        new AntPathRequestMatcher("/api/v1/chatbot/**")))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
