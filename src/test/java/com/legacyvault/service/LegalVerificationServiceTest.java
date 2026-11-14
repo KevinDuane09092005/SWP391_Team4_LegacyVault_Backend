@@ -6,6 +6,7 @@ import com.legacyvault.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -48,6 +49,12 @@ public class LegalVerificationServiceTest {
 
     @Mock
     private FileStorageService fileStorageService;
+
+    @Mock
+    private AuditLogService auditLogService;
+
+    @Mock
+    private NotificationService notificationService;
 
     @InjectMocks
     private LegalVerificationService legalVerificationService;
@@ -179,6 +186,21 @@ public class LegalVerificationServiceTest {
     }
 
     @Test
+    void testRejectCase_RejectsUnsupportedReasonCodeWithoutChangingCase() {
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(testCase));
+
+        RejectCaseRequest request = new RejectCaseRequest("GENERIC_REJECTION", "Please provide corrected documents.");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> legalVerificationService.rejectCase("case-uuid-1042", "verifier-uuid-1", request));
+
+        assertEquals("SUBMITTED", testCase.getStatus());
+        verify(handoverCaseRepository, never()).save(any(HandoverCase.class));
+        verify(verificationReviewRepository, never()).save(any(VerificationReview.class));
+        verifyNoInteractions(auditLogService, notificationService, emailService);
+    }
+
+    @Test
     void testRejectCase() {
         when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(testCase));
         when(handoverCaseRepository.save(any(HandoverCase.class))).thenReturn(testCase);
@@ -187,16 +209,84 @@ public class LegalVerificationServiceTest {
         when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-1")).thenReturn(List.of(testExecutor));
         when(verificationDocumentRepository.findByCaseIdOrderByUploadedAtDesc("case-uuid-1042")).thenReturn(List.of(testDoc));
 
-        RejectCaseRequest request = new RejectCaseRequest("BLURRY_UNREADABLE", "Ảnh chụp Giấy chứng tử bị mờ.");
+        RejectCaseRequest request = new RejectCaseRequest(
+                "INSUFFICIENT_INFORMATION", "Executor has not provided the required certified death record.");
 
         VerificationCaseDetailResponse response = legalVerificationService.rejectCase("case-uuid-1042", "verifier-uuid-1", request);
 
         assertNotNull(response);
         assertEquals("REJECTED", testCase.getStatus());
-        assertEquals("Ảnh chụp Giấy chứng tử bị mờ.", testCase.getRejectionReason());
+        assertEquals("PENDING", testCase.getClearanceStatus());
+        assertEquals("Executor has not provided the required certified death record.", testCase.getRejectionReason());
 
         verify(handoverCaseRepository, times(1)).save(testCase);
         verify(verificationReviewRepository, times(1)).save(any(VerificationReview.class));
+        verify(verificationReviewRepository).save(argThat(review ->
+                "INSUFFICIENT_INFORMATION".equals(review.getRejectionReasonCode())));
+        verify(emailService).sendVerificationRejectedToExecutor(
+                eq("linh.pham@beneficiary.com"), eq("Linh Pham"), eq("LV-1042"),
+                eq("Executor has not provided the required certified death record."), eq("INSUFFICIENT_INFORMATION"));
+        verifyNoInteractions(auditLogService, notificationService);
+    }
+
+    @Test
+    void testRejectCase_SuspectedFraudCreatesHoldAuditAndNotifications() {
+        User verifier = new User();
+        verifier.setId("verifier-uuid-1");
+        verifier.setFullName("Legal Verifier");
+        verifier.setRole("legal_verifier");
+
+        User admin = new User();
+        admin.setId("admin-uuid-1");
+        admin.setRole("system_admin");
+        admin.setAccountStatus("ACTIVE");
+
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(testCase));
+        when(handoverCaseRepository.save(any(HandoverCase.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(verificationReviewRepository.save(any(VerificationReview.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.findById("verifier-uuid-1")).thenReturn(Optional.of(verifier));
+        when(userRepository.findById("owner-1")).thenReturn(Optional.of(testOwner));
+        when(userRepository.findAll()).thenReturn(List.of(admin));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-1")).thenReturn(List.of(testExecutor));
+        when(verificationDocumentRepository.findByCaseIdOrderByUploadedAtDesc("case-uuid-1042"))
+                .thenReturn(List.of(testDoc));
+
+        RejectCaseRequest request = new RejectCaseRequest("SUSPECTED_FRAUD", "Document details require investigation.");
+        VerificationCaseDetailResponse response = legalVerificationService.rejectCase(
+                "case-uuid-1042", "verifier-uuid-1", request);
+
+        assertEquals("REJECTED", testCase.getStatus());
+        assertEquals("FRAUD_HOLD", testCase.getClearanceStatus());
+        assertEquals("Document details require investigation.", response.getRejectionReason());
+
+        ArgumentCaptor<VerificationReview> reviewCaptor = ArgumentCaptor.forClass(VerificationReview.class);
+        verify(verificationReviewRepository).save(reviewCaptor.capture());
+        assertEquals("SUSPECTED_FRAUD", reviewCaptor.getValue().getRejectionReasonCode());
+
+        verify(auditLogService).recordLog(
+                eq("verifier-uuid-1"), eq("Legal Verifier"), eq("legal_verifier"),
+                eq("LEGAL_FRAUD_HOLD"), eq("LV-1042"), eq("SUCCESS"), isNull(),
+                contains("Document details require investigation."));
+        verify(notificationService).createNotification(
+                eq("owner-1"), anyString(), anyString(), eq("LEGAL_FRAUD_HOLD"), anyString(), anyString());
+        verify(notificationService).createNotification(
+                eq("admin-uuid-1"), anyString(), contains("suspected fraud"), eq("LEGAL_FRAUD_HOLD"), anyString(), anyString());
+        verify(emailService).sendFraudHoldNoticeToExecutor(
+                eq("linh.pham@beneficiary.com"), eq("Linh Pham"), eq("LV-1042"));
+        verify(emailService, never()).sendVerificationRejectedToExecutor(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void testFraudHeldCaseCannotBeReviewedOrApprovedAgain() {
+        testCase.setStatus("REJECTED");
+        testCase.setClearanceStatus("FRAUD_HOLD");
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(testCase));
+
+        assertThrows(IllegalStateException.class,
+                () -> legalVerificationService.startReview("case-uuid-1042", "verifier-uuid-1"));
+        assertThrows(IllegalStateException.class,
+                () -> legalVerificationService.approveCase("case-uuid-1042", "verifier-uuid-1", new ApproveCaseRequest()));
+        verify(handoverCaseRepository, never()).save(any(HandoverCase.class));
     }
 
     @Test

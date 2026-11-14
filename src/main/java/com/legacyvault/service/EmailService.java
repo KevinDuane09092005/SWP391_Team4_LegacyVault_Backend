@@ -26,4 +26,13 @@ public interface EmailService {
      */
     void sendVerificationRejectedToExecutor(String executorEmail, String executorName,
                                             String caseNumber, String reason, String reasonCode);
+
+    default void sendFraudHoldNoticeToExecutor(String executorEmail, String executorName, String caseNumber) {
+        sendVerificationRejectedToExecutor(
+                executorEmail,
+                executorName,
+                caseNumber,
+                "This case is on hold for additional legal review. Please wait for further instructions.",
+                "FURTHER_REVIEW_REQUIRED");
+    }
 }

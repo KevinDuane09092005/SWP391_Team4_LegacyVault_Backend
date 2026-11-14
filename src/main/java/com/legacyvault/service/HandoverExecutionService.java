@@ -235,16 +235,7 @@ public class HandoverExecutionService {
     @Transactional
     public StartReleaseResponse startHandoverRelease(String caseIdentifier, String executorUserId) {
         HandoverCase c = findCaseByIdentifier(caseIdentifier);
-
-        String currentStatus = c.getStatus() != null ? c.getStatus().toUpperCase() : "";
-        if (!currentStatus.equals("APPROVED")
-                && !currentStatus.equals("IN PROGRESS")
-                && !currentStatus.equals("HANDOVER_IN_PROGRESS")
-                && !currentStatus.equals("RELEASED")) {
-            throw new IllegalStateException(
-                    "Cannot start handover release: Case legal verification is not APPROVED yet. Current status: "
-                            + c.getStatus());
-        }
+        ensureReleaseAllowed(c);
 
         String accessCode = c.getCaseNumber() + "-HANDOVER-SECURE";
         String accessCodeHash = sha256Hex(accessCode);
@@ -368,6 +359,7 @@ public class HandoverExecutionService {
     @Transactional
     public Map<String, String> dispatchSecureHandover(String caseIdentifier, String executorUserId) {
         HandoverCase c = findCaseByIdentifier(caseIdentifier);
+        ensureReleaseAllowed(c);
         c.setStatus("RELEASED");
         handoverCaseRepository.save(c);
 
@@ -418,6 +410,27 @@ public class HandoverExecutionService {
                 .filter(contact -> "verified".equalsIgnoreCase(contact.getStatus()))
                 .collect(Collectors.toList());
         return !verifiedBeneficiaries.isEmpty() ? verifiedBeneficiaries : allBeneficiaries;
+    }
+
+    private void ensureReleaseAllowed(HandoverCase handoverCase) {
+        if ("FRAUD_HOLD".equalsIgnoreCase(handoverCase.getClearanceStatus())) {
+            throw new IllegalStateException(
+                    "Cannot release this case: it is on hold for suspected fraud pending investigation.");
+        }
+
+        String currentStatus = handoverCase.getStatus() != null
+                ? handoverCase.getStatus().toUpperCase(Locale.ROOT) : "";
+        if ("REJECTED".equals(currentStatus)) {
+            throw new IllegalStateException("Cannot release this case because legal verification was rejected.");
+        }
+        if (!currentStatus.equals("APPROVED")
+                && !currentStatus.equals("IN PROGRESS")
+                && !currentStatus.equals("HANDOVER_IN_PROGRESS")
+                && !currentStatus.equals("RELEASED")) {
+            throw new IllegalStateException(
+                    "Cannot start handover release: Case legal verification is not APPROVED yet. Current status: "
+                            + handoverCase.getStatus());
+        }
     }
 
     public HandoverCase findCaseByIdentifier(String caseIdentifier) {

@@ -434,4 +434,27 @@ public class EmailServiceImpl implements EmailService {
                     e.getMessage());
         }
     }
+
+    @Override
+    public void sendFraudHoldNoticeToExecutor(String executorEmail, String executorName, String caseNumber) {
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setFrom(fromEmail);
+            message.setTo(executorEmail);
+            message.setSubject("[LegacyVault] Additional review required - Case " + caseNumber);
+            message.setText(
+                    "Hello " + (executorName != null ? executorName : "") + ",\n\n"
+                            + "Case #" + caseNumber
+                            + " is on hold while the legal verification team completes an additional review.\n"
+                            + "The vault is not currently authorized for release. Please wait for further instructions; "
+                            + "do not submit duplicate documents unless requested.\n\n"
+                            + "LegacyVault Legal Verification Team");
+
+            mailSender.send(message);
+            logger.info("Sent additional legal review notice for case {} to Executor: {}", caseNumber, executorEmail);
+        } catch (Exception e) {
+            logger.warn("Could not send additional legal review notice for case {} to Executor {}: {}",
+                    caseNumber, executorEmail, e.getMessage());
+        }
+    }
 }

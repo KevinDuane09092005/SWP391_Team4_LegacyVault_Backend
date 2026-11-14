@@ -134,6 +134,15 @@ class HandoverExecutionServiceTest {
     }
 
     @Test
+    void testStartHandoverRelease_ThrowsIfCaseHasFraudHold() {
+        mockCase.setClearanceStatus("FRAUD_HOLD");
+        when(handoverCaseRepository.findByCaseNumber("LV-1042")).thenReturn(Optional.of(mockCase));
+
+        assertThrows(IllegalStateException.class,
+                () -> handoverExecutionService.startHandoverRelease("LV-1042", "executor-1"));
+    }
+
+    @Test
     void testGetAuthorizationEvaluation() {
         when(handoverCaseRepository.findByCaseNumber("LV-1042")).thenReturn(Optional.of(mockCase));
         when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
@@ -158,5 +167,21 @@ class HandoverExecutionServiceTest {
         assertEquals("RELEASED", result.get("status"));
         assertEquals("RELEASED", mockCase.getStatus());
         verify(handoverCaseRepository).save(mockCase);
+    }
+
+    @Test
+    void testDispatchSecureHandover_RejectsRejectedOrFraudHeldCases() {
+        when(handoverCaseRepository.findByCaseNumber("LV-1042")).thenReturn(Optional.of(mockCase));
+        mockCase.setStatus("REJECTED");
+
+        assertThrows(IllegalStateException.class,
+                () -> handoverExecutionService.dispatchSecureHandover("LV-1042", "Minh Le"));
+        verify(handoverCaseRepository, never()).save(any(HandoverCase.class));
+
+        mockCase.setStatus("APPROVED");
+        mockCase.setClearanceStatus("FRAUD_HOLD");
+        assertThrows(IllegalStateException.class,
+                () -> handoverExecutionService.dispatchSecureHandover("LV-1042", "Minh Le"));
+        verify(handoverCaseRepository, never()).save(any(HandoverCase.class));
     }
 }

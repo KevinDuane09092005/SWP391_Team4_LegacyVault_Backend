@@ -251,6 +251,35 @@ class BeneficiaryHandoverServiceTest {
                         "another-case-id", "beneficiary-uuid-1"));
     }
 
+    @Test
+    void testGetAuthorizedAssets_BlockedForRejectedOrFraudHeldCase() {
+        stubVerifiedFaceClaim();
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(mockCase));
+        mockCase.setStatus("REJECTED");
+
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> beneficiaryHandoverService.getAuthorizedAssets("beneficiary-uuid-1"));
+
+        mockCase.setStatus("APPROVED");
+        mockCase.setClearanceStatus("FRAUD_HOLD");
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> beneficiaryHandoverService.getAuthorizedAssets("beneficiary-uuid-1"));
+    }
+
+    @Test
+    void testConfirmReceipt_BlockedForFraudHeldCase() {
+        stubVerifiedFaceClaim();
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(mockCase));
+        mockCase.setStatus("APPROVED");
+        mockCase.setClearanceStatus("FRAUD_HOLD");
+
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> beneficiaryHandoverService.confirmReceivedAndCloseCase(
+                        "beneficiary-uuid-1", true, "127.0.0.1", "Mozilla/5.0"));
+        verify(handoverReceiptRepository, never()).save(any(HandoverReceipt.class));
+        assertEquals("APPROVED", mockCase.getStatus());
+    }
+
     private void stubVerifiedFaceClaim() {
         BeneficiaryClaimSession claim = new BeneficiaryClaimSession();
         claim.setBeneficiaryContactId("beneficiary-uuid-1");

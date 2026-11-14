@@ -27,6 +27,13 @@ public class LegalVerificationService {
     private static final Logger logger = LoggerFactory.getLogger(LegalVerificationService.class);
     private static final DateTimeFormatter UI_DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM dd, yyyy",
             Locale.ENGLISH);
+    private static final Set<String> REJECTION_REASON_CODES = Set.of(
+            "INSUFFICIENT_INFORMATION",
+            "INCORRECT_INFORMATION",
+            "BLURRY_UNREADABLE",
+            "INVALID_DOCUMENT",
+            "INSUFFICIENT_AUTHORITY",
+            "SUSPECTED_FRAUD");
 
     private final HandoverCaseRepository handoverCaseRepository;
     private final VerificationDocumentRepository verificationDocumentRepository;
@@ -35,6 +42,8 @@ public class LegalVerificationService {
     private final ContactRepository contactRepository;
     private final EmailService emailService;
     private final FileStorageService fileStorageService;
+    private final AuditLogService auditLogService;
+    private final NotificationService notificationService;
 
     public LegalVerificationService(HandoverCaseRepository handoverCaseRepository,
             VerificationDocumentRepository verificationDocumentRepository,
@@ -42,7 +51,9 @@ public class LegalVerificationService {
             UserRepository userRepository,
             ContactRepository contactRepository,
             EmailService emailService,
-            FileStorageService fileStorageService) {
+            FileStorageService fileStorageService,
+            AuditLogService auditLogService,
+            NotificationService notificationService) {
         this.handoverCaseRepository = handoverCaseRepository;
         this.verificationDocumentRepository = verificationDocumentRepository;
         this.verificationReviewRepository = verificationReviewRepository;
@@ -50,6 +61,8 @@ public class LegalVerificationService {
         this.contactRepository = contactRepository;
         this.emailService = emailService;
         this.fileStorageService = fileStorageService;
+        this.auditLogService = auditLogService;
+        this.notificationService = notificationService;
     }
 
     @Transactional(readOnly = true)
@@ -152,6 +165,7 @@ public class LegalVerificationService {
     @Transactional
     public VerificationCaseDetailResponse startReview(String caseIdOrNumber, String verifierId) {
         HandoverCase c = findCase(caseIdOrNumber);
+        ensureCaseNotFraudHeld(c);
         String resolvedVerifierId = resolveValidVerifierUserId(verifierId, c.getOwnerId());
         c.setStatus("UNDER_REVIEW");
         c.setAssignedVerifierId(resolvedVerifierId);
@@ -163,6 +177,7 @@ public class LegalVerificationService {
     @Transactional
     public ApproveCaseResponse approveCase(String caseIdOrNumber, String verifierId, ApproveCaseRequest request) {
         HandoverCase c = findCase(caseIdOrNumber);
+        ensureCaseNotFraudHeld(c);
         String resolvedVerifierId = resolveValidVerifierUserId(verifierId, c.getOwnerId());
 
         c.setStatus("APPROVED");
@@ -233,32 +248,54 @@ public class LegalVerificationService {
                 : "Document verification failed.";
         String reasonCode = (request != null && request.getReasonCode() != null) ? request.getReasonCode()
                 : "INVALID_DOCUMENT";
+        reasonCode = reasonCode.trim().isEmpty()
+                ? "INVALID_DOCUMENT"
+                : reasonCode.trim().toUpperCase(Locale.ROOT);
+        if (!REJECTION_REASON_CODES.contains(reasonCode)) {
+            throw new IllegalArgumentException("Unsupported legal rejection reason: " + reasonCode);
+        }
+        boolean suspectedFraud = "SUSPECTED_FRAUD".equals(reasonCode);
+
+        ensureCaseNotFraudHeld(c);
 
         c.setStatus("REJECTED");
         c.setAssignedVerifierId(resolvedVerifierId);
         c.setRejectionReason(reason);
+        if (suspectedFraud) {
+            c.setClearanceStatus("FRAUD_HOLD");
+            c.setVaultUnlockToken(null);
+        }
         handoverCaseRepository.save(c);
 
         VerificationReview review = new VerificationReview();
         review.setCaseId(c.getCaseId());
         review.setVerifierId(resolvedVerifierId != null ? resolvedVerifierId : c.getOwnerId());
         review.setDecision("REJECTED");
-        review.setRejectionReasonCode(reasonCode);
+        review.setRejectionReasonCode(suspectedFraud ? "SUSPECTED_FRAUD" : reasonCode);
         review.setDetailedExplanation(reason);
         verificationReviewRepository.save(review);
 
         logger.warn("Case {} REJECTED by verifierId={}, reason={}", c.getCaseNumber(), resolvedVerifierId, reason);
 
+        if (suspectedFraud) {
+            recordFraudHold(c, resolvedVerifierId, reason);
+        }
+
         // Gửi email thông báo từ chối đến Executor đã xác thực
         Optional<Contact> executorOpt = findPrimaryExecutor(c.getOwnerId());
         if (executorOpt.isPresent()) {
             Contact executor = executorOpt.get();
-            emailService.sendVerificationRejectedToExecutor(
-                    executor.getEmail(),
-                    executor.getFullName(),
-                    c.getCaseNumber(),
-                    reason,
-                    reasonCode);
+            if (suspectedFraud) {
+                emailService.sendFraudHoldNoticeToExecutor(
+                        executor.getEmail(), executor.getFullName(), c.getCaseNumber());
+            } else {
+                emailService.sendVerificationRejectedToExecutor(
+                        executor.getEmail(),
+                        executor.getFullName(),
+                        c.getCaseNumber(),
+                        reason,
+                        reasonCode);
+            }
         } else {
             logger.warn("Case {} REJECTED nhưng không tìm thấy Executor để gửi mail thông báo.", c.getCaseNumber());
         }
@@ -274,6 +311,7 @@ public class LegalVerificationService {
             String issuedBy,
             LocalDate issuedDate) throws IOException {
         HandoverCase c = findCase(caseIdOrNumber);
+        ensureCaseNotFraudHeld(c);
 
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("File cannot be empty");
@@ -376,6 +414,7 @@ public class LegalVerificationService {
     @Transactional
     public VerificationCaseDetailResponse submitVerificationRequest(String caseIdOrNumber, String notes) {
         HandoverCase c = findCase(caseIdOrNumber);
+        ensureCaseNotFraudHeld(c);
         if (!verificationDocumentRepository.existsByCaseIdAndDocumentType(c.getCaseId(), "DEATH_CERTIFICATE")
                 && verificationDocumentRepository.countByCaseId(c.getCaseId()) == 0) {
             throw new IllegalStateException("Cannot submit verification request without death certificate document");
@@ -432,6 +471,78 @@ public class LegalVerificationService {
         }
 
         return fallbackOwnerId != null ? fallbackOwnerId : "system-verifier";
+    }
+
+    private void ensureCaseNotFraudHeld(HandoverCase handoverCase) {
+        if (handoverCase != null && "FRAUD_HOLD".equalsIgnoreCase(handoverCase.getClearanceStatus())) {
+            throw new IllegalStateException(
+                    "This case is on hold for suspected fraud and cannot be resubmitted or approved.");
+        }
+    }
+
+    private void recordFraudHold(HandoverCase handoverCase, String verifierId, String reason) {
+        User verifier = verifierId != null ? userRepository.findById(verifierId).orElse(null) : null;
+        String verifierName = verifier != null && verifier.getFullName() != null
+                ? verifier.getFullName() : "Legal Verifier";
+        String verifierRole = verifier != null && verifier.getRole() != null
+                ? verifier.getRole() : "LEGAL_VERIFIER";
+
+        auditLogService.recordLog(
+                verifierId,
+                verifierName,
+                verifierRole,
+                "LEGAL_FRAUD_HOLD",
+                handoverCase.getCaseNumber(),
+                "SUCCESS",
+                null,
+                "Reason code: SUSPECTED_FRAUD; Verifier note: " + reason);
+
+        Map<String, User> recipients = new LinkedHashMap<>();
+        User owner = handoverCase.getOwnerId() != null
+                ? userRepository.findById(handoverCase.getOwnerId()).orElse(null) : null;
+        if (owner != null && owner.getId() != null) {
+            recipients.put(owner.getId(), owner);
+        }
+
+        List<User> allUsers = userRepository.findAll();
+        if (allUsers != null) {
+            for (User user : allUsers) {
+                if (user == null || user.getId() == null || !isActiveUser(user) || !isAdminRole(user.getRole())) {
+                    continue;
+                }
+                recipients.put(user.getId(), user);
+            }
+        }
+
+        for (User recipient : recipients.values()) {
+            boolean admin = isAdminRole(recipient.getRole());
+            String title = admin ? "Legal case flagged for review" : "Legal case review on hold";
+            String content = admin
+                    ? "Case #" + handoverCase.getCaseNumber()
+                            + " was flagged for suspected fraud. Asset release is on hold pending investigation."
+                    : "Case #" + handoverCase.getCaseNumber()
+                            + " has been placed on hold for additional legal review. Asset access is paused while the case is reviewed.";
+            notificationService.createNotification(
+                    recipient.getId(),
+                    title,
+                    content,
+                    "LEGAL_FRAUD_HOLD",
+                    admin ? "Urgent" : "Review",
+                    admin ? "/dashboard/admin/audit" : "/dashboard");
+        }
+    }
+
+    private boolean isAdminRole(String role) {
+        if (role == null) {
+            return false;
+        }
+        String normalizedRole = role.trim().toUpperCase(Locale.ROOT);
+        return "ADMIN".equals(normalizedRole) || "SYSTEM_ADMIN".equals(normalizedRole);
+    }
+
+    private boolean isActiveUser(User user) {
+        String status = user.getAccountStatus();
+        return status == null || status.isBlank() || "ACTIVE".equalsIgnoreCase(status.trim());
     }
 
     private HandoverCase findCase(String caseIdOrNumber) {

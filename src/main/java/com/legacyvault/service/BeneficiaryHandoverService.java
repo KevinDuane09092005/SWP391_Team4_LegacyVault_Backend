@@ -533,7 +533,25 @@ public class BeneficiaryHandoverService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Complete the face match and liveness check for this beneficiary case before accessing inherited assets");
         }
+        ensureCaseNotRejectedOrFraudHeld(session.getCaseId());
         return session;
+    }
+
+    private void ensureCaseNotRejectedOrFraudHeld(String caseId) {
+        if (caseId == null || caseId.isBlank()) {
+            return;
+        }
+        Optional<HandoverCase> handoverCase = handoverCaseRepository.findById(caseId)
+                .or(() -> handoverCaseRepository.findByCaseNumber(caseId));
+        if (handoverCase.isPresent()) {
+            HandoverCase resolvedCase = handoverCase.get();
+            boolean rejected = "REJECTED".equalsIgnoreCase(resolvedCase.getStatus());
+            boolean fraudHeld = "FRAUD_HOLD".equalsIgnoreCase(resolvedCase.getClearanceStatus());
+            if (rejected || fraudHeld) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                        "This handover case is rejected or on hold and cannot release inherited assets");
+            }
+        }
     }
 
     /**
