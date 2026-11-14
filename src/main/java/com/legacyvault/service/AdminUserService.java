@@ -14,9 +14,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class AdminUserService {
+
+    private static final Set<String> ADMIN_ASSIGNABLE_ROLES = Set.of("ADMIN", "VAULT_OWNER", "LEGAL_VERIFIER");
 
     private static final Map<String, String> API_TO_STORED_ROLE = Map.of(
             "ADMIN", "admin",
@@ -94,12 +97,17 @@ public class AdminUserService {
     public AdminUserResponse updateRole(String adminId, String userId, String role, String ipAddress) {
         String normalizedRole = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
         String storedRole = API_TO_STORED_ROLE.get(normalizedRole);
-        if (storedRole == null) {
-            throw AdminApiException.badRequest("Role is not supported.");
+        String nextApiRole = "SYSTEM_ADMIN".equals(normalizedRole) ? "ADMIN" : normalizedRole;
+        if (storedRole == null || !ADMIN_ASSIGNABLE_ROLES.contains(nextApiRole)) {
+            throw AdminApiException.badRequest("ROLE_NOT_ASSIGNABLE",
+                    "Only Admin, Legal Verifier, and Vault Owner roles can be assigned here.");
         }
         User target = getTargetAndCheckSelfChange(adminId, userId);
         String previousRole = toApiRole(target.getRole());
-        String nextApiRole = toApiRole(storedRole);
+        if (!ADMIN_ASSIGNABLE_ROLES.contains(previousRole)) {
+            throw AdminApiException.badRequest("ROLE_MANAGED_BY_RELATIONSHIP",
+                    "Executor and Beneficiary roles are determined by vault or handover-case relationships.");
+        }
         if (previousRole.equals(nextApiRole)) {
             return toResponse(target);
         }

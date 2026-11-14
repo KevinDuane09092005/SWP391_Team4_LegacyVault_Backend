@@ -296,6 +296,12 @@ public class AdminSettingsService {
         return defaults;
     }
 
+    @Transactional(readOnly = true)
+    public boolean isIntegrationEnabled(String id) {
+        return listIntegrations().stream()
+                .anyMatch(item -> id.equals(item.get("id")) && Boolean.TRUE.equals(item.get("enabled")));
+    }
+
     @Transactional
     public List<Map<String, Object>> updateIntegration(String adminId, String id, Boolean enabled, String ipAddress) {
         if (id == null || id.isBlank() || enabled == null) {

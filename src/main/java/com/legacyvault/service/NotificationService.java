@@ -13,11 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,8 +23,6 @@ import java.util.regex.Pattern;
 public class NotificationService {
 
     private static final DateTimeFormatter DISPLAY_TIME = DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a", Locale.ENGLISH);
-    private static final Set<String> PROTOTYPE_NOTIFICATION_IDS = Set.of(
-            "notif-001", "notif-002", "notif-003", "notif-004", "notif-005", "notif-1042-approved");
 
     private static final Pattern DEEP_LINK_CASE_PATTERN = Pattern.compile("(?:handover/|cases/|caseId=)([A-Za-z0-9_-]+)");
     private static final Pattern TEXT_CASE_PATTERN = Pattern.compile("(?:Case|case)\\s*(?:#|:\\s*#?|\\s+)\\s*([A-Z0-9]+(?:-[A-Z0-9]+)?)");
@@ -41,25 +37,6 @@ public class NotificationService {
     public NotificationCenterListResponse getNotificationList(String userId, Pageable pageable) {
         Page<InAppNotification> page = notificationRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
         List<NotificationCenterItem> items = new ArrayList<>();
-        if (page.isEmpty()) {
-            items.add(new NotificationCenterItem("notif-001", "Legal Verification Approved",
-                    "Legal verification for Case #LV-1042 has been approved by the legal verifier.",
-                    "24 Sep 2026, 11:45 AM", "Approved", false, "LV-1042", "/dashboard/beneficiary/handover/LV-1042"));
-            items.add(new NotificationCenterItem("notif-002", "Asset Handover Available",
-                    "Assets for Case #LV-1042 are now available for beneficiary claim.",
-                    "24 Sep 2026, 10:30 AM", "Pending", false, "LV-1042", "/dashboard/beneficiary/handover/LV-1042"));
-            items.add(new NotificationCenterItem("notif-003", "Check-in Completed",
-                    "Regular Dead Man's Switch check-in recorded successfully.",
-                    "23 Sep 2026, 09:15 AM", "Verified", true, null, "/dashboard/owner/dms"));
-            items.add(new NotificationCenterItem("notif-004", "New Review Request",
-                    "A new case requires legal document verification.",
-                    "22 Sep 2026, 02:20 PM", "New", true, "LV-1042", "/dashboard/verifier/queue"));
-            items.add(new NotificationCenterItem("notif-005", "Access Permission Granted",
-                    "Your role has been updated to Digital Executor.",
-                    "20 Sep 2026, 04:00 PM", "Info", true, null, "/dashboard/executor"));
-            return new NotificationCenterListResponse(items, 2);
-        }
-
         for (InAppNotification notification : page.getContent()) {
             String formattedTime = notification.getCreatedAt() == null
                     ? "Recent" : notification.getCreatedAt().format(DISPLAY_TIME);
@@ -87,13 +64,12 @@ public class NotificationService {
 
     @Transactional
     public void markAsRead(String userId, String notificationId) {
-        notificationRepository.findByNotificationIdAndUserId(notificationId, userId)
-                .ifPresent(notification -> {
-                    if (!Boolean.TRUE.equals(notification.getIsRead())) {
-                        notification.setIsRead(true);
-                        notificationRepository.save(notification);
-                    }
-                });
+        InAppNotification notification = notificationRepository.findByNotificationIdAndUserId(notificationId, userId)
+                .orElseThrow(BillingException::notFound);
+        if (!Boolean.TRUE.equals(notification.getIsRead())) {
+            notification.setIsRead(true);
+            notificationRepository.save(notification);
+        }
     }
 
     @Transactional
@@ -120,26 +96,7 @@ public class NotificationService {
                             notification.getTitle(), notification.getContent(), occurredAt)));
         }
 
-        if (!PROTOTYPE_NOTIFICATION_IDS.contains(notificationId)) {
-            throw BillingException.notFound();
-        }
-        return prototypeNotificationDetail(notificationId);
-    }
-
-    private NotificationDetailResponse prototypeNotificationDetail(String notificationId) {
-        NotificationDetailResponse.EventMetadata metadata = new NotificationDetailResponse.EventMetadata(
-                "Case #LV-1042", "Thanh Pham", "24 Sep 2026, 11:45 AM", "Legal Verification", "Attorney Notary");
-        List<NotificationDetailResponse.TimelineItem> timeline = Arrays.asList(
-                new NotificationDetailResponse.TimelineItem("Legal Verification Approved",
-                        "Verification request submitted with death certificate document reviewed & approved", "24 Sep 2026, 11:45 AM"),
-                new NotificationDetailResponse.TimelineItem("Document Review In Progress",
-                        "Legal verifier assigned and began examining submitted death certificate", "24 Sep 2026, 10:15 AM"),
-                new NotificationDetailResponse.TimelineItem("Handover Case Triggered",
-                        "Dead Man's Switch timer expired without check-in response", "23 Sep 2026, 08:00 AM"));
-        return new NotificationDetailResponse(notificationId, "Legal Verification Approved", "Approved",
-                "The legal verification for Case #LV-1042 has been reviewed and approved by the legal verification team. "
-                        + "All documentation has been verified and the case has been moved to Release & Delivery stage for processing.",
-                metadata, timeline);
+        throw BillingException.notFound();
     }
 
     @Transactional

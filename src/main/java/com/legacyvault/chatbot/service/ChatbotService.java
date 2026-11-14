@@ -9,6 +9,7 @@ import com.legacyvault.chatbot.dto.ChatbotRole;
 import com.legacyvault.chatbot.dto.ChatbotSuggestionsRequest;
 import com.legacyvault.chatbot.dto.ChatbotSuggestionsResponse;
 import com.legacyvault.chatbot.dto.ChatbotTopic;
+import com.legacyvault.service.AdminSettingsService;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -19,17 +20,21 @@ public class ChatbotService {
     private final ChatbotAiProvider aiProvider;
     private final ChatbotKnowledgeBase knowledgeBase;
     private final ChatbotRateLimiter rateLimiter;
+    private final AdminSettingsService adminSettingsService;
 
     public ChatbotService(ChatbotAiProvider aiProvider,
                           ChatbotKnowledgeBase knowledgeBase,
-                          ChatbotRateLimiter rateLimiter) {
+                          ChatbotRateLimiter rateLimiter,
+                          AdminSettingsService adminSettingsService) {
         this.aiProvider = aiProvider;
         this.knowledgeBase = knowledgeBase;
         this.rateLimiter = rateLimiter;
+        this.adminSettingsService = adminSettingsService;
     }
 
     public ChatbotSuggestionsResponse suggestions(String userId, ChatbotRole role,
                                                    ChatbotSuggestionsRequest request) {
+        ensureAssistantEnabled();
         rateLimiter.checkSuggestionLimit(userId);
         String language = normalizeLanguage(request.language());
         return new ChatbotSuggestionsResponse(
@@ -37,6 +42,7 @@ public class ChatbotService {
     }
 
     public ChatbotMessageResponse ask(String userId, ChatbotRole role, ChatbotMessageRequest request) {
+        ensureAssistantEnabled();
         rateLimiter.checkMessageLimit(userId);
         String language = normalizeLanguage(request.language());
         List<ChatbotHistoryTurn> history = request.history() == null ? List.of() : request.history();
@@ -46,6 +52,12 @@ public class ChatbotService {
                 ? ChatbotTopic.UNKNOWN : aiReply.topic();
         List<String> suggestions = knowledgeBase.relatedQuestions(topic, language, role);
         return new ChatbotMessageResponse(aiReply.reply(), topic, aiReply.status(), suggestions);
+    }
+
+    private void ensureAssistantEnabled() {
+        if (!adminSettingsService.isIntegrationEnabled("ai-assistant")) {
+            throw ChatbotException.integrationDisabled();
+        }
     }
 
     private String instructions(ChatbotRole role, String language) {

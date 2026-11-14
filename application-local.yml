@@ -1,4 +1,0 @@
-legacyvault:
-  chatbot:
-    openai:
-      api-key: "PASTE_OPENAI_API_KEY_HERE"

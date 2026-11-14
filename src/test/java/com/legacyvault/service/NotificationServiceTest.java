@@ -60,16 +60,16 @@ class NotificationServiceTest {
     }
 
     @Test
-    void getNotificationListUsesPrototypeRowsWhenEmpty() {
+    void getNotificationListReturnsEmptyWhenNoSavedNotificationsExist() {
         when(notificationRepository.findByUserIdOrderByCreatedAtDesc(eq("user-1"), any(PageRequest.class)))
                 .thenReturn(Page.empty());
+        when(notificationRepository.countByUserIdAndIsReadFalse("user-1")).thenReturn(0L);
 
         NotificationCenterListResponse response =
                 notificationService.getNotificationList("user-1", PageRequest.of(0, 10));
 
-        assertEquals(5, response.getNotifications().size());
-        assertEquals(2, response.getUnreadCount());
-        assertEquals("LV-1042", response.getNotifications().get(0).getCaseId());
+        assertTrue(response.getNotifications().isEmpty());
+        assertEquals(0, response.getUnreadCount());
     }
 
     @Test
@@ -95,16 +95,21 @@ class NotificationServiceTest {
     }
 
     @Test
-    void getPrototypeNotificationDetail() {
+    void getNotificationDetailReturnsNotFoundForUnknownNotification() {
         when(notificationRepository.findByNotificationIdAndUserId("notif-1042-approved", "user-1"))
                 .thenReturn(Optional.empty());
 
-        NotificationDetailResponse detail =
-                notificationService.getNotificationDetail("user-1", "notif-1042-approved");
+        assertThrows(BillingException.class,
+                () -> notificationService.getNotificationDetail("user-1", "notif-1042-approved"));
+    }
 
-        assertEquals("Legal Verification Approved", detail.getTitle());
-        assertEquals("Case #LV-1042", detail.getEventMetadata().getCaseId());
-        assertEquals(3, detail.getRelatedActivityTimeline().size());
+    @Test
+    void markAsReadReturnsNotFoundForUnknownNotification() {
+        when(notificationRepository.findByNotificationIdAndUserId("missing", "user-1"))
+                .thenReturn(Optional.empty());
+
+        assertThrows(BillingException.class, () -> notificationService.markAsRead("user-1", "missing"));
+        verify(notificationRepository, never()).save(any(InAppNotification.class));
     }
 
     @Test

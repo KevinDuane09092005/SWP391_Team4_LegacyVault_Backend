@@ -27,6 +27,12 @@ public class ChatbotException extends RuntimeException {
                 HttpStatus.SERVICE_UNAVAILABLE);
     }
 
+    public static ChatbotException integrationDisabled() {
+        return new ChatbotException("AI_DISABLED",
+                "The AI assistant is currently disabled by an administrator.",
+                HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
     public static ChatbotException rateLimited() {
         return new ChatbotException("RATE_LIMITED",
                 "Too many chatbot requests. Please try again shortly.",

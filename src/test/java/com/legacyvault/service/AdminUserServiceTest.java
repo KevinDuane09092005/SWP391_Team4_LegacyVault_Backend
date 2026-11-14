@@ -71,19 +71,28 @@ class AdminUserServiceTest {
     }
 
     @Test
-    void updateRoleAcceptsFeExecutorNameAndStoresBackendRole() {
+    void updateRoleRejectsExecutorBecauseItIsRelationshipManaged() {
+        AdminApiException ex = assertThrows(AdminApiException.class,
+                () -> adminUserService.updateRole("admin-1", "u-1", "EXECUTOR", null));
+
+        assertEquals("ROLE_NOT_ASSIGNABLE", ex.getCode());
+        verifyNoInteractions(userRepository, auditLogService, notificationService);
+    }
+
+    @Test
+    void updateRoleAcceptsLegalVerifierSystemRole() {
         User admin = user("admin-1", "Admin User", "admin@example.com", "admin", "ACTIVE");
         User target = user("u-1", "Target User", "target@example.com", "vault_owner", "ACTIVE");
         when(userRepository.findById("u-1")).thenReturn(Optional.of(target));
         when(userRepository.findById("admin-1")).thenReturn(Optional.of(admin));
         when(userRepository.save(target)).thenReturn(target);
 
-        AdminUserResponse response = adminUserService.updateRole("admin-1", "u-1", "EXECUTOR", null);
+        AdminUserResponse response = adminUserService.updateRole("admin-1", "u-1", "LEGAL_VERIFIER", null);
 
-        assertEquals("digital_executor", target.getRole());
-        assertEquals("EXECUTOR", response.role());
+        assertEquals("legal_verifier", target.getRole());
+        assertEquals("LEGAL_VERIFIER", response.role());
         verify(auditLogService).recordLog("admin-1", "Admin User", "ADMIN", "USER_ROLE_CHANGED",
-                "User u-1", "SUCCESS", null, "Changed USER_ROLE_CHANGED from VAULT_OWNER to EXECUTOR");
+                "User u-1", "SUCCESS", null, "Changed USER_ROLE_CHANGED from VAULT_OWNER to LEGAL_VERIFIER");
     }
 
     @Test
