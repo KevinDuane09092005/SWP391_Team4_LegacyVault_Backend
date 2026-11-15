@@ -76,6 +76,7 @@ class HandoverExecutionServiceTest {
 
     @Test
     void testGetExecutorDashboard() {
+        when(userRepository.findById("executor-1")).thenReturn(Optional.empty());
         when(handoverCaseRepository.findAll()).thenReturn(List.of(mockCase));
         when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
         when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary));
@@ -88,6 +89,88 @@ class HandoverExecutionServiceTest {
         assertEquals("LV-1042", dashboard.getCases().get(0).getCaseNumber());
         assertEquals("Thanh Pham", dashboard.getCases().get(0).getVaultOwner());
         assertEquals("Linh Pham", dashboard.getCases().get(0).getBeneficiary());
+    }
+
+    @Test
+    void testGetExecutorDashboard_FiltersByDesignatedOwners() {
+        User executorUser = new User();
+        executorUser.setId("exec-user-1");
+        executorUser.setEmail("exec@example.com");
+        executorUser.setRole("vault_owner");
+
+        User owner2 = new User();
+        owner2.setId("owner-uuid-2");
+        owner2.setFullName("Lan Tran");
+
+        HandoverCase case2 = new HandoverCase("LV-2001", "owner-uuid-2", "dms-uuid-2");
+        case2.setCaseId("case-uuid-2001");
+        case2.setStatus("INITIATED");
+
+        HandoverCase undesignatedCase = new HandoverCase("LV-9999", "owner-uuid-3", "dms-uuid-3");
+        undesignatedCase.setCaseId("case-uuid-9999");
+        undesignatedCase.setStatus("APPROVED");
+
+        Contact execForOwner1 = new Contact("owner-uuid-1", "Minh Le", "Executor", "exec@example.com", null, false, true, "verified");
+        Contact execForOwner2 = new Contact("owner-uuid-2", "Minh Le", "Executor", "exec@example.com", null, false, true, "verified");
+        Contact beneficiaryOnlyForOwner3 = new Contact("owner-uuid-3", "Minh Le", "Beneficiary", "exec@example.com", null, true, false, "verified");
+
+        when(userRepository.findById("exec-user-1")).thenReturn(Optional.of(executorUser));
+        when(contactRepository.findByEmailIgnoreCaseAndStatus("exec@example.com", "verified"))
+                .thenReturn(List.of(execForOwner1, execForOwner2, beneficiaryOnlyForOwner3));
+        when(handoverCaseRepository.findAll()).thenReturn(List.of(mockCase, case2, undesignatedCase));
+        when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
+        when(userRepository.findById("owner-uuid-2")).thenReturn(Optional.of(owner2));
+        when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary));
+        when(contactRepository.findByOwnerId("owner-uuid-2")).thenReturn(Collections.emptyList());
+
+        ExecutorHandoverDashboardResponse dashboard = handoverExecutionService.getExecutorDashboard("exec-user-1");
+
+        assertNotNull(dashboard);
+        assertEquals(2, dashboard.getMetrics().getTotalHandoverCases());
+        assertEquals(2, dashboard.getCases().size());
+        assertEquals(List.of("LV-1042", "LV-2001"),
+                dashboard.getCases().stream().map(ExecutorHandoverDashboardResponse.HandoverCaseTableRow::getCaseNumber).toList());
+    }
+
+    @Test
+    void testGetBeneficiaryDashboard_FiltersByDesignatedOwners() {
+        User beneficiaryUser = new User();
+        beneficiaryUser.setId("bene-user-1");
+        beneficiaryUser.setEmail("linh.pham@beneficiary.com");
+        beneficiaryUser.setRole("vault_owner");
+
+        User owner2 = new User();
+        owner2.setId("owner-uuid-2");
+        owner2.setFullName("Lan Tran");
+
+        HandoverCase case2 = new HandoverCase("LV-2001", "owner-uuid-2", "dms-uuid-2");
+        case2.setCaseId("case-uuid-2001");
+        case2.setStatus("RELEASED");
+
+        HandoverCase undesignatedCase = new HandoverCase("LV-9999", "owner-uuid-3", "dms-uuid-3");
+        undesignatedCase.setCaseId("case-uuid-9999");
+        undesignatedCase.setStatus("APPROVED");
+
+        Contact beneForOwner1 = new Contact("owner-uuid-1", "Linh Pham", "Daughter", "linh.pham@beneficiary.com", null, true, false, "verified");
+        Contact beneForOwner2 = new Contact("owner-uuid-2", "Linh Pham", "Niece", "linh.pham@beneficiary.com", null, true, false, "verified");
+        Contact execOnlyForOwner3 = new Contact("owner-uuid-3", "Linh Pham", "Executor", "linh.pham@beneficiary.com", null, false, true, "verified");
+
+        when(userRepository.findById("bene-user-1")).thenReturn(Optional.of(beneficiaryUser));
+        when(contactRepository.findByEmailIgnoreCaseAndStatus("linh.pham@beneficiary.com", "verified"))
+                .thenReturn(List.of(beneForOwner1, beneForOwner2, execOnlyForOwner3));
+        when(handoverCaseRepository.findAll()).thenReturn(List.of(mockCase, case2, undesignatedCase));
+        when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
+        when(userRepository.findById("owner-uuid-2")).thenReturn(Optional.of(owner2));
+        when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary));
+        when(contactRepository.findByOwnerId("owner-uuid-2")).thenReturn(List.of(beneForOwner2));
+
+        ExecutorHandoverDashboardResponse dashboard = handoverExecutionService.getBeneficiaryDashboard("bene-user-1");
+
+        assertNotNull(dashboard);
+        assertEquals(2, dashboard.getMetrics().getTotalHandoverCases());
+        assertEquals(2, dashboard.getCases().size());
+        assertEquals(List.of("LV-1042", "LV-2001"),
+                dashboard.getCases().stream().map(ExecutorHandoverDashboardResponse.HandoverCaseTableRow::getCaseNumber).toList());
     }
 
     @Test

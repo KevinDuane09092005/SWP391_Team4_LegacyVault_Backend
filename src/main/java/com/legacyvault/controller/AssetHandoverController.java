@@ -65,6 +65,17 @@ public class AssetHandoverController {
     // 2. BENEFICIARY PORTAL AUTHENTICATION & KYC
     // =========================================================================
 
+    @GetMapping("/beneficiary/dashboard")
+    public ResponseEntity<?> getBeneficiaryHandoverDashboard(Authentication authentication) {
+        try {
+            String userId = authentication != null ? authentication.getName() : "beneficiary-user-id";
+            ExecutorHandoverDashboardResponse response = handoverExecutionService.getBeneficiaryDashboard(userId);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @GetMapping("/beneficiary/portal-context")
     public ResponseEntity<?> getBeneficiaryPortalContext(@RequestParam(name = "case_ref", defaultValue = "LV-1042") String caseRef) {
         try {

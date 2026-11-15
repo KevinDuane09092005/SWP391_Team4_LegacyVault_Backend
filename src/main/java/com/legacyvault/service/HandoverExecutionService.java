@@ -68,9 +68,64 @@ public class HandoverExecutionService {
 
     @Transactional(readOnly = true)
     public ExecutorHandoverDashboardResponse getExecutorDashboard(String executorUserId) {
-        List<HandoverCase> allCases = handoverCaseRepository.findAll();
+        return buildDashboardResponse(resolveCasesForDesignatedRole(executorUserId, true));
+    }
 
-        int total = allCases.size();
+    @Transactional(readOnly = true)
+    public ExecutorHandoverDashboardResponse getBeneficiaryDashboard(String beneficiaryUserId) {
+        return buildDashboardResponse(resolveCasesForDesignatedRole(beneficiaryUserId, false));
+    }
+
+    private List<HandoverCase> resolveCasesForDesignatedRole(String userId, boolean forExecutor) {
+        User user = (userId != null && !userId.isBlank())
+                ? userRepository.findById(userId).orElse(null)
+                : null;
+
+        if (user == null) {
+            return handoverCaseRepository.findAll();
+        }
+
+        if (user.getEmail() != null && !user.getEmail().isBlank() && contactRepository != null) {
+            List<Contact> verifiedLinks = contactRepository.findByEmailIgnoreCaseAndStatus(
+                    user.getEmail().trim(), "verified");
+            if (verifiedLinks != null && !verifiedLinks.isEmpty()) {
+                Set<String> designatedOwnerIds = verifiedLinks.stream()
+                        .filter(c -> c.getOwnerId() != null
+                                && (user.getId() == null || !user.getId().equals(c.getOwnerId()))
+                                && (forExecutor
+                                        ? Boolean.TRUE.equals(c.getIsExecutor())
+                                        : Boolean.TRUE.equals(c.getIsBeneficiary())))
+                        .map(Contact::getOwnerId)
+                        .collect(Collectors.toSet());
+
+                if (!designatedOwnerIds.isEmpty()) {
+                    List<HandoverCase> allCases = handoverCaseRepository.findAll();
+                    if (allCases == null) {
+                        return Collections.emptyList();
+                    }
+                    return allCases.stream()
+                            .filter(c -> c.getOwnerId() != null && designatedOwnerIds.contains(c.getOwnerId()))
+                            .collect(Collectors.toList());
+                }
+            }
+        }
+
+        String role = user.getRole() != null ? user.getRole().trim().toLowerCase(Locale.ROOT) : "";
+        if ("digital_executor".equals(role)
+                || "executor".equals(role)
+                || "beneficiary".equals(role)
+                || "admin".equals(role)
+                || "system_admin".equals(role)) {
+            return handoverCaseRepository.findAll();
+        }
+
+        return Collections.emptyList();
+    }
+
+    private ExecutorHandoverDashboardResponse buildDashboardResponse(List<HandoverCase> allCases) {
+        List<HandoverCase> cases = allCases != null ? allCases : Collections.emptyList();
+
+        int total = cases.size();
         int pendingApproval = 0;
         int inProgress = 0;
         int completed = 0;
@@ -78,7 +133,7 @@ public class HandoverExecutionService {
         List<ExecutorHandoverDashboardResponse.HandoverCaseTableRow> rows = new ArrayList<>();
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.ENGLISH);
 
-        for (HandoverCase c : allCases) {
+        for (HandoverCase c : cases) {
             String rawStatus = c.getStatus() != null ? c.getStatus().toUpperCase() : "INITIATED";
 
             String legalStatus;
