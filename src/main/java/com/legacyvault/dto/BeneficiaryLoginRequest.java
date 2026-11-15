@@ -17,6 +17,10 @@ public class BeneficiaryLoginRequest {
     @JsonAlias("accessCode")
     private String accessCode;
 
+    @JsonProperty("case_ref")
+    @JsonAlias({"caseRef", "case_id", "caseId"})
+    private String caseRef;
+
     public BeneficiaryLoginRequest() {}
 
     public BeneficiaryLoginRequest(String email, String accessCode) {
@@ -38,5 +42,13 @@ public class BeneficiaryLoginRequest {
 
     public void setAccessCode(String accessCode) {
         this.accessCode = accessCode;
+    }
+
+    public String getCaseRef() {
+        return caseRef;
+    }
+
+    public void setCaseRef(String caseRef) {
+        this.caseRef = caseRef;
     }
 }

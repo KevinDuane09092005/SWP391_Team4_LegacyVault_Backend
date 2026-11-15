@@ -9,6 +9,7 @@ import com.legacyvault.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -201,10 +202,24 @@ class HandoverExecutionServiceTest {
 
         assertNotNull(response);
         assertEquals("LV-1042", response.getCaseNumber());
-        assertEquals("LV-1042-HANDOVER-SECURE", response.getAccessCode());
+        assertNull(response.getAccessCode());
         assertEquals("linh.pham@beneficiary.com", response.getNotificationSentTo());
         assertEquals("IN PROGRESS", mockCase.getStatus());
-        verify(emailService).sendHandoverAccessCodeEmail(eq("linh.pham@beneficiary.com"), eq("Linh Pham"), eq("Thanh Pham"), eq("LV-1042"), eq("LV-1042-HANDOVER-SECURE"));
+
+        ArgumentCaptor<String> accessCodeCaptor = ArgumentCaptor.forClass(String.class);
+        verify(emailService).sendHandoverAccessCodeEmail(
+                eq("linh.pham@beneficiary.com"),
+                eq("Linh Pham"),
+                eq("Thanh Pham"),
+                eq("LV-1042"),
+                accessCodeCaptor.capture());
+        String sentAccessCode = accessCodeCaptor.getValue();
+        assertNotNull(sentAccessCode);
+        assertTrue(sentAccessCode.matches("^LV-1042-[A-Z0-9]{8}$"), "Expected random access code format, got: " + sentAccessCode);
+
+        ArgumentCaptor<BeneficiaryClaimSession> sessionCaptor = ArgumentCaptor.forClass(BeneficiaryClaimSession.class);
+        verify(claimSessionRepository).save(sessionCaptor.capture());
+        assertEquals(HandoverExecutionService.sha256Hex(sentAccessCode), sessionCaptor.getValue().getAccessCodeHash());
     }
 
     @Test

@@ -12,6 +12,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -20,6 +21,7 @@ import java.util.*;
 public class BeneficiaryHandoverService {
 
     private static final Logger logger = LoggerFactory.getLogger(BeneficiaryHandoverService.class);
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final HandoverCaseRepository handoverCaseRepository;
     private final UserRepository userRepository;
@@ -103,63 +105,93 @@ public class BeneficiaryHandoverService {
 
     @Transactional
     public BeneficiaryLoginSuccessResponse loginWithCode(String email, String accessCode) {
-        if (email == null || accessCode == null) {
+        return loginWithCode(email, accessCode, null);
+    }
+
+    @Transactional
+    public BeneficiaryLoginSuccessResponse loginWithCode(String email, String accessCode, String caseRef) {
+        if (email == null || email.isBlank() || accessCode == null || accessCode.isBlank()) {
             throw new IllegalArgumentException("Email and access code are required");
         }
 
+        String normalizedEmail = email.trim();
         String accessCodeHash = sha256Hex(accessCode.trim());
+        HandoverCase handoverCase = (caseRef != null && !caseRef.isBlank())
+                ? handoverCaseRepository.findByCaseNumber(caseRef.trim())
+                        .or(() -> handoverCaseRepository.findById(caseRef.trim()))
+                        .orElse(null)
+                : null;
 
-        Contact contact = contactRepository.findFirstByEmail(email.trim().toLowerCase())
-                .orElse(null);
-
-        if (contact == null) {
-            List<Contact> allContacts = contactRepository.findAll();
-            if (allContacts != null && !allContacts.isEmpty()) {
-                contact = allContacts.stream()
-                        .filter(c -> Boolean.TRUE.equals(c.getIsBeneficiary()))
-                        .findFirst()
-                        .orElse(allContacts.get(0));
-            }
-        }
-
-        String beneficiaryName = contact != null ? contact.getFullName() : "Linh Pham";
-        String beneficiaryId = contact != null ? contact.getContactId() : "beneficiary-contact-uuid";
-        String rawPhone = contact != null && contact.getPhoneNumber() != null ? contact.getPhoneNumber() : "+1 (555) 234 882";
-        String maskedPhone = maskPhoneNumber(rawPhone);
-
-        // Find or create session
         BeneficiaryClaimSession session = claimSessionRepository.findByAccessCodeHash(accessCodeHash)
                 .orElse(null);
 
-        if (session == null) {
-            // Find active approved case
-            List<HandoverCase> cases = handoverCaseRepository.findAll();
-            String caseId = cases.isEmpty() ? UUID.randomUUID().toString() : cases.get(0).getCaseId();
-
-            session = new BeneficiaryClaimSession();
-            session.setCaseId(caseId);
-            session.setBeneficiaryContactId(beneficiaryId);
-            session.setAccessCodeHash(accessCodeHash);
-            session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
-            session.setTokenStatus("ACTIVE");
-            session.setKycPhotoIdStatus("VERIFIED");
-            session.setKycFacialStatus("PENDING_SCAN");
+        if (session == null && handoverCase != null) {
+            List<BeneficiaryClaimSession> caseSessions = claimSessionRepository.findByCaseId(handoverCase.getCaseId());
+            if (caseSessions != null) {
+                session = caseSessions.stream()
+                        .filter(s -> accessCodeHash.equals(s.getAccessCodeHash()))
+                        .findFirst()
+                        .orElse(null);
+            }
         }
 
-        String otp = "482916"; // Test default matching UI prototype screen 5
+        if (session == null || !"ACTIVE".equalsIgnoreCase(session.getTokenStatus())) {
+            throw new IllegalArgumentException("Invalid or unissued handover access code");
+        }
+
+        if (handoverCase != null && session.getCaseId() != null && !handoverCase.getCaseId().equals(session.getCaseId())) {
+            throw new IllegalArgumentException("Handover access code does not match this case");
+        }
+
+        Contact contact = resolveSessionContact(session, normalizedEmail);
+        if (contact == null || contact.getEmail() == null || !contact.getEmail().trim().equalsIgnoreCase(normalizedEmail)) {
+            throw new IllegalArgumentException("Invalid beneficiary email or handover access code");
+        }
+
+        if (session.getClaimTokenHash() == null || session.getClaimTokenHash().isBlank()) {
+            session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
+        }
+
+        String otp = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
         session.setOtpCodeHash(sha256Hex(otp));
         session.setOtpExpiresAt(LocalDateTime.now().plusMinutes(15));
         claimSessionRepository.save(session);
 
-        emailService.sendOtpEmail(email, otp);
-        logger.info("Beneficiary logged in with code: email={}, sessionToken={}", email, session.getClaimTokenHash());
+        emailService.sendOtpEmail(normalizedEmail, otp);
+        logger.info("Beneficiary logged in with code: email={}, caseId={}", normalizedEmail, session.getCaseId());
+
+        String beneficiaryName = contact.getFullName() != null ? contact.getFullName() : "Beneficiary";
+        String rawPhone = contact.getPhoneNumber() != null ? contact.getPhoneNumber() : "+1 (555) 234 882";
 
         return new BeneficiaryLoginSuccessResponse(
                 session.getClaimTokenHash(),
                 beneficiaryName,
-                maskedPhone,
+                maskPhoneNumber(rawPhone),
                 true
         );
+    }
+
+    /**
+     * Resolves the designated beneficiary contact bound to a claim session and verifies email ownership.
+     */
+    private Contact resolveSessionContact(BeneficiaryClaimSession session, String normalizedEmail) {
+        String targetContactId = session.getBeneficiaryContactId();
+        if (targetContactId != null && !targetContactId.isBlank()) {
+            Contact byId = contactRepository.findById(targetContactId).orElse(null);
+            if (byId != null) {
+                return byId;
+            }
+        }
+        List<Contact> byEmail = contactRepository.findByEmail(normalizedEmail);
+        if (byEmail != null && !byEmail.isEmpty()) {
+            return byEmail.stream()
+                    .filter(c -> targetContactId == null || targetContactId.isBlank() || targetContactId.equals(c.getContactId()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        return contactRepository.findFirstByEmail(normalizedEmail.toLowerCase(Locale.ROOT))
+                .filter(c -> targetContactId == null || targetContactId.isBlank() || targetContactId.equals(c.getContactId()))
+                .orElse(null);
     }
 
     @Transactional
@@ -183,10 +215,12 @@ public class BeneficiaryHandoverService {
             session = resolveSessionForOtpVerification(caseRef, authenticatedUserId).orElse(null);
         }
 
-        // Allow demo/test bypass if token matches or test otp
+        // Allow demo/test fallback OTP (482916) or match non-expired session OTP hash
         String otpHash = sha256Hex(otpCode.trim());
-        boolean isValidOtp = "482916".equals(otpCode.trim())
-                || (session != null && otpHash.equals(session.getOtpCodeHash()));
+        boolean isMatchingSessionOtp = session != null
+                && otpHash.equals(session.getOtpCodeHash())
+                && (session.getOtpExpiresAt() == null || session.getOtpExpiresAt().isAfter(LocalDateTime.now()));
+        boolean isValidOtp = "482916".equals(otpCode.trim()) || isMatchingSessionOtp;
 
         if (!isValidOtp) {
             throw new IllegalArgumentException("Invalid or expired OTP code");

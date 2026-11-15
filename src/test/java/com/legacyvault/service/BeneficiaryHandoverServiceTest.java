@@ -101,15 +101,59 @@ class BeneficiaryHandoverServiceTest {
 
     @Test
     void testLoginWithCode_Success() {
-        when(contactRepository.findFirstByEmail("linh.pham@beneficiary.com")).thenReturn(Optional.of(mockContact));
-        when(claimSessionRepository.findByAccessCodeHash(anyString())).thenReturn(Optional.empty());
+        String accessCode = "LV-1042-7K9P4M2X";
+        BeneficiaryClaimSession activeSession = new BeneficiaryClaimSession();
+        activeSession.setCaseId("case-uuid-1042");
+        activeSession.setBeneficiaryContactId("beneficiary-uuid-1");
+        activeSession.setAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode));
+        activeSession.setClaimTokenHash("claim-token-hash-1");
+        activeSession.setTokenStatus("ACTIVE");
 
-        BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode("linh.pham@beneficiary.com", "LV-1042-HANDOVER-SECURE");
+        when(claimSessionRepository.findByAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode)))
+                .thenReturn(Optional.of(activeSession));
+        when(contactRepository.findById("beneficiary-uuid-1")).thenReturn(Optional.of(mockContact));
+
+        BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode(
+                "linh.pham@beneficiary.com", accessCode);
 
         assertNotNull(response);
         assertEquals("Linh Pham", response.getBeneficiaryName());
         assertTrue(response.isRequiresOtp());
-        verify(emailService).sendOtpEmail(eq("linh.pham@beneficiary.com"), eq("482916"));
+        ArgumentCaptor<String> otpCaptor = ArgumentCaptor.forClass(String.class);
+        verify(emailService).sendOtpEmail(eq("linh.pham@beneficiary.com"), otpCaptor.capture());
+        assertTrue(otpCaptor.getValue().matches("^\\d{6}$"));
+        assertEquals(HandoverExecutionService.sha256Hex(otpCaptor.getValue()), activeSession.getOtpCodeHash());
+        verify(claimSessionRepository).save(activeSession);
+    }
+
+    @Test
+    void testLoginWithCode_InvalidAccessCode_ThrowsException() {
+        when(claimSessionRepository.findByAccessCodeHash(anyString())).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () ->
+                beneficiaryHandoverService.loginWithCode("linh.pham@beneficiary.com", "WRONG-CODE"));
+
+        verify(emailService, never()).sendOtpEmail(anyString(), anyString());
+        verify(claimSessionRepository, never()).save(any(BeneficiaryClaimSession.class));
+    }
+
+    @Test
+    void testLoginWithCode_EmailMismatch_ThrowsException() {
+        String accessCode = "LV-1042-7K9P4M2X";
+        BeneficiaryClaimSession activeSession = new BeneficiaryClaimSession();
+        activeSession.setCaseId("case-uuid-1042");
+        activeSession.setBeneficiaryContactId("beneficiary-uuid-1");
+        activeSession.setAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode));
+        activeSession.setTokenStatus("ACTIVE");
+
+        when(claimSessionRepository.findByAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode)))
+                .thenReturn(Optional.of(activeSession));
+        when(contactRepository.findById("beneficiary-uuid-1")).thenReturn(Optional.of(mockContact));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                beneficiaryHandoverService.loginWithCode("other.person@example.com", accessCode));
+
+        verify(emailService, never()).sendOtpEmail(anyString(), anyString());
     }
 
     @Test

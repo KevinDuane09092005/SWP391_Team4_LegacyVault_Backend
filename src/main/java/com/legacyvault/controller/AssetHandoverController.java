@@ -90,7 +90,7 @@ public class AssetHandoverController {
     public ResponseEntity<?> beneficiaryLoginWithCode(@Valid @RequestBody BeneficiaryLoginRequest request) {
         try {
             BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode(
-                    request.getEmail(), request.getAccessCode());
+                    request.getEmail(), request.getAccessCode(), request.getCaseRef());
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

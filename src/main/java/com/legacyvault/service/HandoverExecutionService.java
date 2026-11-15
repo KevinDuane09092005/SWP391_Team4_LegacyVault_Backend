@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -19,6 +20,8 @@ import java.util.stream.Collectors;
 public class HandoverExecutionService {
 
     private static final Logger logger = LoggerFactory.getLogger(HandoverExecutionService.class);
+    private static final String ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final HandoverCaseRepository handoverCaseRepository;
     private final UserRepository userRepository;
@@ -64,6 +67,18 @@ public class HandoverExecutionService {
         } catch (Exception e) {
             throw new RuntimeException("SHA-256 hashing error", e);
         }
+    }
+
+    /**
+     * Generates a cryptographically random handover access code prefixed with the case number.
+     */
+    public static String generateSecureAccessCode(String caseNumber) {
+        String prefix = (caseNumber != null && !caseNumber.isBlank()) ? caseNumber.trim() : "LV-CASE";
+        StringBuilder suffix = new StringBuilder(8);
+        for (int i = 0; i < 8; i++) {
+            suffix.append(ACCESS_CODE_ALPHABET.charAt(SECURE_RANDOM.nextInt(ACCESS_CODE_ALPHABET.length())));
+        }
+        return prefix + "-" + suffix;
     }
 
     @Transactional(readOnly = true)
@@ -274,9 +289,21 @@ public class HandoverExecutionService {
             detailLegalStatus = "REJECTED";
         }
 
+        String effectiveCaseStatus = c.getStatus() != null ? c.getStatus().toUpperCase() : "IN PROGRESS";
+        if (("IN PROGRESS".equals(effectiveCaseStatus) || "HANDOVER_IN_PROGRESS".equals(effectiveCaseStatus))
+                && claimSessionRepository != null && c.getCaseId() != null) {
+            List<BeneficiaryClaimSession> sessions = claimSessionRepository.findByCaseId(c.getCaseId());
+            boolean anyVerified = sessions != null && sessions.stream()
+                    .anyMatch(s -> "ACTIVE".equalsIgnoreCase(s.getTokenStatus())
+                            && Boolean.TRUE.equals(s.getIdentityVerified()));
+            if (anyVerified) {
+                effectiveCaseStatus = "IDENTITY_VERIFIED";
+            }
+        }
+
         return new HandoverDetailsResponse(
                 c.getCaseNumber(),
-                c.getStatus() != null ? c.getStatus().toUpperCase() : "IN PROGRESS",
+                effectiveCaseStatus,
                 new HandoverDetailsResponse.VaultOwnerSummary(ownerName, ownerEmail, "DECEASED/INACTIVE"),
                 new HandoverDetailsResponse.BeneficiarySummary(beneficiaryName, beneficiaryEmail),
                 new HandoverDetailsResponse.LegalVerificationSummary(
@@ -301,9 +328,6 @@ public class HandoverExecutionService {
                             + c.getStatus());
         }
 
-        String accessCode = c.getCaseNumber() + "-HANDOVER-SECURE";
-        String accessCodeHash = sha256Hex(accessCode);
-
         // Find all beneficiaries for this owner (prioritize verified beneficiaries)
         List<Contact> beneficiaryContacts = findBeneficiaryContacts(c.getOwnerId());
 
@@ -320,20 +344,8 @@ public class HandoverExecutionService {
             String defaultEmail = (allContacts != null && !allContacts.isEmpty() && allContacts.get(0).getEmail() != null)
                     ? allContacts.get(0).getEmail()
                     : "linh.pham@beneficiary.com";
-            BeneficiaryClaimSession session = claimSessionRepository
-                    .findByCaseIdAndBeneficiaryContactId(c.getCaseId(), defaultBeneficiaryId)
-                    .orElse(new BeneficiaryClaimSession());
-            session.setCaseId(c.getCaseId());
-            session.setBeneficiaryContactId(defaultBeneficiaryId);
-            session.setAccessCodeHash(accessCodeHash);
-            session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
-            session.setOtpCodeHash(sha256Hex("482916"));
-            session.setOtpExpiresAt(LocalDateTime.now().plusMinutes(15));
-            session.setTokenStatus("ACTIVE");
-            session.setKycPhotoIdStatus("VERIFIED");
-            session.setKycFacialStatus("PENDING_SCAN");
-            session.setIdentityVerified(false);
-            claimSessionRepository.save(session);
+            String accessCode = generateSecureAccessCode(c.getCaseNumber());
+            upsertClaimSession(c.getCaseId(), defaultBeneficiaryId, sha256Hex(accessCode));
             notifiedEmails.add(defaultEmail);
         } else {
             for (Contact beneficiary : beneficiaryContacts) {
@@ -341,21 +353,8 @@ public class HandoverExecutionService {
                 String beneficiaryEmail = beneficiary.getEmail();
                 String beneficiaryName = beneficiary.getFullName();
 
-                BeneficiaryClaimSession session = claimSessionRepository
-                        .findByCaseIdAndBeneficiaryContactId(c.getCaseId(), beneficiaryId)
-                        .orElse(new BeneficiaryClaimSession());
-
-                session.setCaseId(c.getCaseId());
-                session.setBeneficiaryContactId(beneficiaryId);
-                session.setAccessCodeHash(accessCodeHash);
-                session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
-                session.setOtpCodeHash(sha256Hex("482916"));
-                session.setOtpExpiresAt(LocalDateTime.now().plusMinutes(15));
-                session.setTokenStatus("ACTIVE");
-                session.setKycPhotoIdStatus("VERIFIED");
-                session.setKycFacialStatus("PENDING_SCAN");
-                session.setIdentityVerified(false);
-                claimSessionRepository.save(session);
+                String accessCode = generateSecureAccessCode(c.getCaseNumber());
+                upsertClaimSession(c.getCaseId(), beneficiaryId, sha256Hex(accessCode));
 
                 try {
                     emailService.sendHandoverAccessCodeEmail(beneficiaryEmail, beneficiaryName, ownerName,
@@ -373,14 +372,33 @@ public class HandoverExecutionService {
         c.setAuthorizedByExecutor(executorUserId != null ? executorUserId : "Minh Le (Executor)");
         handoverCaseRepository.save(c);
 
-        logger.info("Started Handover Release for case={} accessCode={} recipients={}", c.getCaseNumber(), accessCode,
-                notifiedEmails);
+        logger.info("Started Handover Release for case={} recipients={}", c.getCaseNumber(), notifiedEmails);
 
         return new StartReleaseResponse(
                 c.getCaseNumber(),
                 "IN PROGRESS",
-                accessCode,
+                null,
                 String.join(", ", notifiedEmails));
+    }
+
+    /**
+     * Creates or resets a beneficiary claim session with a newly hashed random access code.
+     */
+    private void upsertClaimSession(String caseId, String beneficiaryContactId, String accessCodeHash) {
+        BeneficiaryClaimSession session = claimSessionRepository
+                .findByCaseIdAndBeneficiaryContactId(caseId, beneficiaryContactId)
+                .orElse(new BeneficiaryClaimSession());
+        session.setCaseId(caseId);
+        session.setBeneficiaryContactId(beneficiaryContactId);
+        session.setAccessCodeHash(accessCodeHash);
+        session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
+        session.setOtpCodeHash(null);
+        session.setOtpExpiresAt(null);
+        session.setTokenStatus("ACTIVE");
+        session.setKycPhotoIdStatus("VERIFIED");
+        session.setKycFacialStatus("PENDING_SCAN");
+        session.setIdentityVerified(false);
+        claimSessionRepository.save(session);
     }
 
     @Transactional(readOnly = true)
