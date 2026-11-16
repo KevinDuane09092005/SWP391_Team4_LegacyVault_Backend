@@ -50,6 +50,11 @@ face-verification:
 storage:
   local:
     base-dir: ${STORAGE_LOCAL_BASE_DIR:/tmp/legacyvault-uploads}
+  supabase:
+    enabled: ${STORAGE_SUPABASE_ENABLED:false}
+    url: ${SUPABASE_URL:}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+    bucket: ${SUPABASE_STORAGE_BUCKET:legacyvault-files}
 
 app:
   backend-url: ${APP_BACKEND_URL}

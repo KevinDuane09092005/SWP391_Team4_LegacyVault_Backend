@@ -5,6 +5,7 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
@@ -15,19 +16,12 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.*;
-import java.security.MessageDigest;
-import java.util.Locale;
-import java.util.Set;
-import java.util.UUID;
 
 @Service
+@ConditionalOnProperty(name = "storage.supabase.enabled", havingValue = "false", matchIfMissing = true)
 public class LocalFileStorageServiceImpl implements FileStorageService {
 
     private static final Logger logger = LoggerFactory.getLogger(LocalFileStorageServiceImpl.class);
-
-    private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            ".pdf", ".png", ".jpg", ".jpeg", ".docx", ".txt"
-    );
 
     @Value("${storage.local.base-dir:uploads}")
     private String baseDir;
@@ -47,18 +41,7 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
 
     @Override
     public StoredFileInfo storeFile(MultipartFile file, String subDirectory) throws IOException {
-        if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("Cannot store empty or null file");
-        }
-
-        String rawOriginalFilename = file.getOriginalFilename();
-        String originalFilename = StringUtils.cleanPath(rawOriginalFilename != null ? rawOriginalFilename : "document.pdf");
-
-        if (originalFilename.contains("..")) {
-            throw new IllegalArgumentException("Cannot store file with relative path outside current directory: " + originalFilename);
-        }
-
-        validateFileExtension(originalFilename);
+        String originalFilename = FileStorageSupport.cleanAndValidateFilename(file);
 
         Path targetDir = this.rootLocation;
         if (subDirectory != null && !subDirectory.trim().isEmpty()) {
@@ -71,25 +54,14 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
 
         Files.createDirectories(targetDir);
 
-        String storedFileName = UUID.randomUUID() + "_" + originalFilename;
+        String storedFileName = FileStorageSupport.buildStoredFilename(originalFilename, false);
         Path destinationFile = targetDir.resolve(storedFileName).normalize();
 
         if (!destinationFile.startsWith(this.rootLocation)) {
             throw new SecurityException("Cannot store file outside configured storage root");
         }
 
-        String sha256Checksum;
-        try (InputStream inputStream = file.getInputStream()) {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                digest.update(buffer, 0, bytesRead);
-            }
-            sha256Checksum = bytesToHex(digest.digest());
-        } catch (Exception e) {
-            sha256Checksum = "UNKNOWN_HASH";
-        }
+        String sha256Checksum = FileStorageSupport.computeSha256(file);
 
         try (InputStream inputStream = file.getInputStream()) {
             Files.copy(inputStream, destinationFile, StandardCopyOption.REPLACE_EXISTING);
@@ -97,11 +69,7 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
 
         Path relativePath = this.rootLocation.relativize(destinationFile);
         String relativePathStr = relativePath.toString().replace('\\', '/');
-
-        String contentType = file.getContentType();
-        if (contentType == null || contentType.isBlank()) {
-            contentType = inferContentType(originalFilename);
-        }
+        String contentType = FileStorageSupport.resolveContentType(file, originalFilename);
 
         logger.info("Stored file successfully: original='{}', stored='{}', path='{}', size={} bytes",
                 originalFilename, storedFileName, relativePathStr, file.getSize());
@@ -159,38 +127,5 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
         }
         Path filePath = this.rootLocation.resolve(StringUtils.cleanPath(relativePath)).normalize();
         return filePath.startsWith(this.rootLocation) && Files.exists(filePath);
-    }
-
-    private void validateFileExtension(String filename) {
-        String lower = filename.toLowerCase(Locale.ROOT);
-        boolean matched = ALLOWED_EXTENSIONS.stream().anyMatch(lower::endsWith);
-        if (!matched) {
-            throw new IllegalArgumentException(
-                    "Invalid file extension. Allowed extensions are: " + String.join(", ", ALLOWED_EXTENSIONS));
-        }
-    }
-
-    private String inferContentType(String filename) {
-        String lower = filename.toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".pdf")) {
-            return "application/pdf";
-        } else if (lower.endsWith(".png")) {
-            return "image/png";
-        } else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
-            return "image/jpeg";
-        } else if (lower.endsWith(".txt")) {
-            return "text/plain; charset=UTF-8";
-        } else if (lower.endsWith(".docx")) {
-            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-        }
-        return "application/octet-stream";
-    }
-
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
     }
 }
