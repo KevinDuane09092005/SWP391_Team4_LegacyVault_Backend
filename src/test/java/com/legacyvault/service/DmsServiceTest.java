@@ -175,4 +175,35 @@ public class DmsServiceTest {
         assertEquals("dms-uuid-1", logs.get(0).getDmsId());
         assertEquals("MANUAL_DASHBOARD", logs.get(0).getCheckInType());
     }
+
+    @Test
+    void testGetDmsStatus_CreatesDefault60sGracePeriodWhenNotFound() {
+        when(dmsRepository.findByOwnerId("owner-new")).thenReturn(Optional.empty());
+        when(dmsRepository.save(any(DeadMansSwitch.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-new")).thenReturn(List.of());
+
+        DmsStatusResponse response = dmsService.getDmsStatus("owner-new");
+
+        assertNotNull(response);
+        assertEquals(60, response.getCheckInIntervalSeconds());
+        assertEquals(60, response.getGracePeriodSeconds());
+        assertEquals("active", response.getStatus());
+        verify(dmsRepository, times(1)).save(any(DeadMansSwitch.class));
+    }
+
+    @Test
+    void testGetDmsStatus_MigratesOld120sTestDefaultTo60s() {
+        DeadMansSwitch legacyDefaultDms = new DeadMansSwitch("owner-legacy", 60, 120);
+        legacyDefaultDms.setDmsId("dms-legacy-1");
+        when(dmsRepository.findByOwnerId("owner-legacy")).thenReturn(Optional.of(legacyDefaultDms));
+        when(dmsRepository.save(any(DeadMansSwitch.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(contactRepository.findByOwnerIdAndIsExecutorTrue("owner-legacy")).thenReturn(List.of());
+
+        DmsStatusResponse response = dmsService.getDmsStatus("owner-legacy");
+
+        assertNotNull(response);
+        assertEquals(60, response.getCheckInIntervalSeconds());
+        assertEquals(60, response.getGracePeriodSeconds());
+        verify(dmsRepository, times(1)).save(legacyDefaultDms);
+    }
 }

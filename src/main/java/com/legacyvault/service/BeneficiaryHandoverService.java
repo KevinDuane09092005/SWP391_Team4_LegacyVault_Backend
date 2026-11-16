@@ -12,6 +12,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -20,6 +21,7 @@ import java.util.*;
 public class BeneficiaryHandoverService {
 
     private static final Logger logger = LoggerFactory.getLogger(BeneficiaryHandoverService.class);
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final HandoverCaseRepository handoverCaseRepository;
     private final UserRepository userRepository;
@@ -103,63 +105,93 @@ public class BeneficiaryHandoverService {
 
     @Transactional
     public BeneficiaryLoginSuccessResponse loginWithCode(String email, String accessCode) {
-        if (email == null || accessCode == null) {
+        return loginWithCode(email, accessCode, null);
+    }
+
+    @Transactional
+    public BeneficiaryLoginSuccessResponse loginWithCode(String email, String accessCode, String caseRef) {
+        if (email == null || email.isBlank() || accessCode == null || accessCode.isBlank()) {
             throw new IllegalArgumentException("Email and access code are required");
         }
 
+        String normalizedEmail = email.trim();
         String accessCodeHash = sha256Hex(accessCode.trim());
+        HandoverCase handoverCase = (caseRef != null && !caseRef.isBlank())
+                ? handoverCaseRepository.findByCaseNumber(caseRef.trim())
+                        .or(() -> handoverCaseRepository.findById(caseRef.trim()))
+                        .orElse(null)
+                : null;
 
-        Contact contact = contactRepository.findFirstByEmail(email.trim().toLowerCase())
-                .orElse(null);
-
-        if (contact == null) {
-            List<Contact> allContacts = contactRepository.findAll();
-            if (allContacts != null && !allContacts.isEmpty()) {
-                contact = allContacts.stream()
-                        .filter(c -> Boolean.TRUE.equals(c.getIsBeneficiary()))
-                        .findFirst()
-                        .orElse(allContacts.get(0));
-            }
-        }
-
-        String beneficiaryName = contact != null ? contact.getFullName() : "Linh Pham";
-        String beneficiaryId = contact != null ? contact.getContactId() : "beneficiary-contact-uuid";
-        String rawPhone = contact != null && contact.getPhoneNumber() != null ? contact.getPhoneNumber() : "+1 (555) 234 882";
-        String maskedPhone = maskPhoneNumber(rawPhone);
-
-        // Find or create session
         BeneficiaryClaimSession session = claimSessionRepository.findByAccessCodeHash(accessCodeHash)
                 .orElse(null);
 
-        if (session == null) {
-            // Find active approved case
-            List<HandoverCase> cases = handoverCaseRepository.findAll();
-            String caseId = cases.isEmpty() ? UUID.randomUUID().toString() : cases.get(0).getCaseId();
-
-            session = new BeneficiaryClaimSession();
-            session.setCaseId(caseId);
-            session.setBeneficiaryContactId(beneficiaryId);
-            session.setAccessCodeHash(accessCodeHash);
-            session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
-            session.setTokenStatus("ACTIVE");
-            session.setKycPhotoIdStatus("VERIFIED");
-            session.setKycFacialStatus("PENDING_SCAN");
+        if (session == null && handoverCase != null) {
+            List<BeneficiaryClaimSession> caseSessions = claimSessionRepository.findByCaseId(handoverCase.getCaseId());
+            if (caseSessions != null) {
+                session = caseSessions.stream()
+                        .filter(s -> accessCodeHash.equals(s.getAccessCodeHash()))
+                        .findFirst()
+                        .orElse(null);
+            }
         }
 
-        String otp = "482916"; // Test default matching UI prototype screen 5
+        if (session == null || !"ACTIVE".equalsIgnoreCase(session.getTokenStatus())) {
+            throw new IllegalArgumentException("Invalid or unissued handover access code");
+        }
+
+        if (handoverCase != null && session.getCaseId() != null && !handoverCase.getCaseId().equals(session.getCaseId())) {
+            throw new IllegalArgumentException("Handover access code does not match this case");
+        }
+
+        Contact contact = resolveSessionContact(session, normalizedEmail);
+        if (contact == null || contact.getEmail() == null || !contact.getEmail().trim().equalsIgnoreCase(normalizedEmail)) {
+            throw new IllegalArgumentException("Invalid beneficiary email or handover access code");
+        }
+
+        if (session.getClaimTokenHash() == null || session.getClaimTokenHash().isBlank()) {
+            session.setClaimTokenHash(sha256Hex(UUID.randomUUID().toString()));
+        }
+
+        String otp = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
         session.setOtpCodeHash(sha256Hex(otp));
         session.setOtpExpiresAt(LocalDateTime.now().plusMinutes(15));
         claimSessionRepository.save(session);
 
-        emailService.sendOtpEmail(email, otp);
-        logger.info("Beneficiary logged in with code: email={}, sessionToken={}", email, session.getClaimTokenHash());
+        emailService.sendOtpEmail(normalizedEmail, otp);
+        logger.info("Beneficiary logged in with code: email={}, caseId={}", normalizedEmail, session.getCaseId());
+
+        String beneficiaryName = contact.getFullName() != null ? contact.getFullName() : "Beneficiary";
+        String rawPhone = contact.getPhoneNumber() != null ? contact.getPhoneNumber() : "+1 (555) 234 882";
 
         return new BeneficiaryLoginSuccessResponse(
                 session.getClaimTokenHash(),
                 beneficiaryName,
-                maskedPhone,
+                maskPhoneNumber(rawPhone),
                 true
         );
+    }
+
+    /**
+     * Resolves the designated beneficiary contact bound to a claim session and verifies email ownership.
+     */
+    private Contact resolveSessionContact(BeneficiaryClaimSession session, String normalizedEmail) {
+        String targetContactId = session.getBeneficiaryContactId();
+        if (targetContactId != null && !targetContactId.isBlank()) {
+            Contact byId = contactRepository.findById(targetContactId).orElse(null);
+            if (byId != null) {
+                return byId;
+            }
+        }
+        List<Contact> byEmail = contactRepository.findByEmail(normalizedEmail);
+        if (byEmail != null && !byEmail.isEmpty()) {
+            return byEmail.stream()
+                    .filter(c -> targetContactId == null || targetContactId.isBlank() || targetContactId.equals(c.getContactId()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        return contactRepository.findFirstByEmail(normalizedEmail.toLowerCase(Locale.ROOT))
+                .filter(c -> targetContactId == null || targetContactId.isBlank() || targetContactId.equals(c.getContactId()))
+                .orElse(null);
     }
 
     @Transactional
@@ -183,25 +215,33 @@ public class BeneficiaryHandoverService {
             session = resolveSessionForOtpVerification(caseRef, authenticatedUserId).orElse(null);
         }
 
-        // Allow demo/test bypass if token matches or test otp
+        // Allow demo/test fallback OTP (482916) or match non-expired session OTP hash
         String otpHash = sha256Hex(otpCode.trim());
-        boolean isValidOtp = "482916".equals(otpCode.trim())
-                || (session != null && otpHash.equals(session.getOtpCodeHash()));
+        boolean isMatchingSessionOtp = session != null
+                && otpHash.equals(session.getOtpCodeHash())
+                && (session.getOtpExpiresAt() == null || session.getOtpExpiresAt().isAfter(LocalDateTime.now()));
+        boolean isValidOtp = "482916".equals(otpCode.trim()) || isMatchingSessionOtp;
 
         if (!isValidOtp) {
             throw new IllegalArgumentException("Invalid or expired OTP code");
         }
 
-        String contactId = session != null
+        String resolvedContactId = session != null
                 ? session.getBeneficiaryContactId()
-                : (authenticatedUserId != null ? authenticatedUserId : "beneficiary-contact-uuid");
-        String email = "linh.pham@beneficiary.com";
+                : resolveBeneficiaryContactId(caseRef, authenticatedUserId);
+        if (resolvedContactId == null || resolvedContactId.isBlank()) {
+            resolvedContactId = "beneficiary-contact-uuid";
+        }
+        String email = contactRepository.findById(resolvedContactId)
+                .map(Contact::getEmail)
+                .filter(e -> e != null && !e.isBlank())
+                .orElse("linh.pham@beneficiary.com");
         if (session != null) {
             session.setIdentityVerified(true);
             claimSessionRepository.save(session);
         }
 
-        String jwt = jwtService.generateToken(contactId, email, "BENEFICIARY");
+        String jwt = jwtService.generateToken(resolvedContactId, email, "BENEFICIARY");
         return new VerifyBeneficiaryOtpResponse(true, jwt);
     }
 
@@ -212,22 +252,25 @@ public class BeneficiaryHandoverService {
 
     @Transactional(readOnly = true)
     public KycStatusResponse getKycStatus(String beneficiaryContactId, String caseReference) {
+        String resolvedContactId = resolveBeneficiaryContactId(caseReference, beneficiaryContactId);
+        boolean strictBeneficiary = resolvedContactId != null && !resolvedContactId.equals(beneficiaryContactId);
+
         if (caseReference != null && !caseReference.isBlank()) {
             Optional<BeneficiaryClaimSession> claim = claimSessionRepository
-                    .findByCaseIdAndBeneficiaryContactId(caseReference, beneficiaryContactId);
+                    .findByCaseIdAndBeneficiaryContactId(caseReference, resolvedContactId);
             if (claim.isEmpty()) {
                 claim = handoverCaseRepository.findByCaseNumber(caseReference)
                         .flatMap(handoverCase -> {
                             Optional<BeneficiaryClaimSession> byContact = claimSessionRepository
-                                    .findByCaseIdAndBeneficiaryContactId(handoverCase.getCaseId(), beneficiaryContactId);
-                            if (byContact.isPresent()) {
+                                    .findByCaseIdAndBeneficiaryContactId(handoverCase.getCaseId(), resolvedContactId);
+                            if (byContact.isPresent() || strictBeneficiary) {
                                 return byContact;
                             }
-                            return findFallbackVerifiedClaimByCaseId(handoverCase.getCaseId(), beneficiaryContactId);
+                            return findFallbackVerifiedClaimByCaseId(handoverCase.getCaseId(), resolvedContactId);
                         });
             }
-            if (claim.isEmpty()) {
-                claim = findFallbackVerifiedClaimByCaseId(caseReference, beneficiaryContactId);
+            if (claim.isEmpty() && !strictBeneficiary) {
+                claim = findFallbackVerifiedClaimByCaseId(caseReference, resolvedContactId);
             }
             return claim
                     .filter(item -> Boolean.TRUE.equals(item.getIdentityVerified()))
@@ -236,10 +279,13 @@ public class BeneficiaryHandoverService {
                             item.getKycPhotoIdStatus(), item.getKycFacialStatus()))
                     .orElseGet(() -> new KycStatusResponse("PENDING", "PENDING_SCAN"));
         }
-        return claimSessionRepository
+        Optional<BeneficiaryClaimSession> latest = claimSessionRepository
                 .findTopByBeneficiaryContactIdAndTokenStatusAndIdentityVerifiedTrueOrderByCreatedAtDesc(
-                        beneficiaryContactId, "ACTIVE")
-                .or(() -> findFallbackLatestVerifiedClaim(beneficiaryContactId))
+                        resolvedContactId, "ACTIVE");
+        if (latest.isEmpty() && !strictBeneficiary) {
+            latest = findFallbackLatestVerifiedClaim(resolvedContactId);
+        }
+        return latest
                 .map(session -> new KycStatusResponse(
                         session.getKycPhotoIdStatus(), session.getKycFacialStatus()))
                 .orElseGet(() -> new KycStatusResponse("PENDING", "PENDING_SCAN"));
@@ -297,7 +343,29 @@ public class BeneficiaryHandoverService {
     @Transactional(readOnly = true)
     public DecryptedAssetDetailResponse getDecryptedAssetDetail(
             String assetId, String beneficiaryContactId, String caseReference) {
-        requireVerifiedFace(beneficiaryContactId, caseReference);
+        BeneficiaryClaimSession verifiedSession = requireVerifiedFace(beneficiaryContactId, caseReference);
+        String effectiveContactId = verifiedSession.getBeneficiaryContactId() != null
+                ? verifiedSession.getBeneficiaryContactId()
+                : resolveBeneficiaryContactId(caseReference, beneficiaryContactId);
+
+        if (assetAssignmentRepository != null && assignmentBeneficiaryRepository != null && assetId != null) {
+            Optional<AssetAssignment> optAssignment = assetAssignmentRepository.findByAssetId(assetId);
+            if (optAssignment.isPresent()) {
+                List<AssignmentBeneficiary> links = assignmentBeneficiaryRepository
+                        .findByAssignmentId(optAssignment.get().getAssignmentId());
+                if (links != null && !links.isEmpty()) {
+                    boolean authorized = links.stream().anyMatch(link ->
+                            (effectiveContactId != null && effectiveContactId.equals(link.getBeneficiaryContactId()))
+                                    || (beneficiaryContactId != null
+                                            && beneficiaryContactId.equals(link.getBeneficiaryContactId())));
+                    if (!authorized) {
+                        throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                                "You are not authorized to access this asset");
+                    }
+                }
+            }
+        }
+
         String passphrase = "autumn · harbor · classic · secure · vault · inheritance · legacy";
         String accessUrl = "https://secure-ledger.legacyvault.com/hardware-024";
 
@@ -419,44 +487,103 @@ public class BeneficiaryHandoverService {
         }
         BeneficiaryClaimSession verifiedClaim = requireVerifiedFace(beneficiaryContactId, caseReference);
 
-        String transReceiptHash = "0a7f4e8b39c0e5a1d7f8c2b9a4e6f1c8d5b7a3e2f9c4d8a1b6e7f2c5d8a972bd";
+        String resolvedContactId = verifiedClaim.getBeneficiaryContactId() != null
+                ? verifiedClaim.getBeneficiaryContactId()
+                : resolveBeneficiaryContactId(caseReference, beneficiaryContactId);
+        if (resolvedContactId == null || resolvedContactId.isBlank()) {
+            resolvedContactId = "beneficiary-contact-uuid";
+        }
 
-        // Update case status if found and resolve valid asset_id for fk_rcpt_asset
+        // Update case status if found and resolve valid asset_ids for fk_rcpt_asset
         Optional<HandoverCase> optCase = handoverCaseRepository.findById(verifiedClaim.getCaseId());
         String resolvedCaseNumber = "LV-1042";
-        String resolvedAssetId = "ASSET-1042-A";
+        String fallbackAssetId = "ASSET-1042-A";
+        String ownerName = "Thanh Pham";
+        String beneficiaryName = contactRepository.findById(resolvedContactId)
+                .map(Contact::getFullName)
+                .filter(n -> n != null && !n.isBlank())
+                .orElse("Linh Pham");
+        String executorName = "Minh Le";
+
+        List<String> targetAssetIds = new ArrayList<>();
         if (optCase.isPresent()) {
             HandoverCase c = optCase.get();
             if (c.getCaseNumber() != null && !c.getCaseNumber().isBlank()) {
                 resolvedCaseNumber = c.getCaseNumber();
             }
+            if (c.getAuthorizedByExecutor() != null && !c.getAuthorizedByExecutor().isBlank()) {
+                executorName = c.getAuthorizedByExecutor();
+            }
+            User owner = c.getOwnerId() != null ? userRepository.findById(c.getOwnerId()).orElse(null) : null;
+            if (owner != null && owner.getFullName() != null && !owner.getFullName().isBlank()) {
+                ownerName = owner.getFullName();
+            }
+
             List<Asset> ownerAssets = assetRepository.findByOwnerId(c.getOwnerId());
             if (ownerAssets == null || ownerAssets.isEmpty()) {
                 ownerAssets = assetRepository.findAll();
             }
             if (ownerAssets != null && !ownerAssets.isEmpty() && ownerAssets.get(0).getAssetId() != null) {
-                resolvedAssetId = ownerAssets.get(0).getAssetId();
+                fallbackAssetId = ownerAssets.get(0).getAssetId();
             }
-            c.setStatus("COMPLETED");
-            c.setResolvedAt(LocalDateTime.now());
-            handoverCaseRepository.save(c);
+
+            targetAssetIds.addAll(getAssignedAssetIdsForBeneficiary(ownerAssets, resolvedContactId));
+            Set<String> allAssignedBeneficiaries = collectAssignedBeneficiaryIds(ownerAssets);
+
+            List<String> assetsToReceipt = !targetAssetIds.isEmpty()
+                    ? targetAssetIds
+                    : List.of(fallbackAssetId);
+
+            List<HandoverReceipt> existingReceipts = handoverReceiptRepository.findByCaseId(c.getCaseId());
+            Set<String> existingPairs = new HashSet<>();
+            Set<String> confirmedBeneficiaries = new HashSet<>();
+            if (existingReceipts != null) {
+                for (HandoverReceipt r : existingReceipts) {
+                    if (r.getBeneficiaryContactId() != null) {
+                        confirmedBeneficiaries.add(r.getBeneficiaryContactId());
+                    }
+                    existingPairs.add(r.getAssetId() + "::" + r.getBeneficiaryContactId());
+                }
+            }
+            confirmedBeneficiaries.add(resolvedContactId);
+
+            for (String targetAssetId : assetsToReceipt) {
+                if (existingPairs.contains(targetAssetId + "::" + resolvedContactId)) {
+                    continue;
+                }
+                String receiptHash = sha256Hex(c.getCaseId() + ":" + targetAssetId + ":" + resolvedContactId + ":" + System.nanoTime());
+                HandoverReceipt receipt = new HandoverReceipt();
+                receipt.setCaseId(c.getCaseId());
+                receipt.setAssetId(targetAssetId);
+                receipt.setBeneficiaryContactId(resolvedContactId);
+                receipt.setDigitalReceiptHash(receiptHash);
+                receipt.setIpAddress(ipAddress != null ? ipAddress : "127.0.0.1");
+                receipt.setUserAgent(userAgent);
+                receipt.setFeedbackNotes(feedbackNotes);
+                receipt.setConfirmedAt(LocalDateTime.now());
+                handoverReceiptRepository.save(receipt);
+            }
+
+            boolean allAssignedConfirmed = allAssignedBeneficiaries.isEmpty()
+                    || confirmedBeneficiaries.containsAll(allAssignedBeneficiaries);
+            if (allAssignedConfirmed) {
+                c.setStatus("COMPLETED");
+                c.setResolvedAt(LocalDateTime.now());
+                handoverCaseRepository.save(c);
+            }
+        } else {
+            String receiptHash = sha256Hex(verifiedClaim.getCaseId() + ":" + fallbackAssetId + ":" + resolvedContactId + ":" + System.nanoTime());
+            HandoverReceipt receipt = new HandoverReceipt();
+            receipt.setCaseId(verifiedClaim.getCaseId());
+            receipt.setAssetId(fallbackAssetId);
+            receipt.setBeneficiaryContactId(resolvedContactId);
+            receipt.setDigitalReceiptHash(receiptHash);
+            receipt.setIpAddress(ipAddress != null ? ipAddress : "127.0.0.1");
+            receipt.setUserAgent(userAgent);
+            receipt.setFeedbackNotes(feedbackNotes);
+            receipt.setConfirmedAt(LocalDateTime.now());
+            handoverReceiptRepository.save(receipt);
         }
-
-        // Save receipt with valid asset_id (fk_rcpt_asset) and beneficiary_contact_id (fk_rcpt_ben)
-        String resolvedContactId = verifiedClaim.getBeneficiaryContactId() != null
-                ? verifiedClaim.getBeneficiaryContactId()
-                : (beneficiaryContactId != null ? beneficiaryContactId : "beneficiary-contact-uuid");
-
-        HandoverReceipt receipt = new HandoverReceipt();
-        receipt.setCaseId(verifiedClaim.getCaseId());
-        receipt.setAssetId(resolvedAssetId);
-        receipt.setBeneficiaryContactId(resolvedContactId);
-        receipt.setDigitalReceiptHash(transReceiptHash);
-        receipt.setIpAddress(ipAddress != null ? ipAddress : "127.0.0.1");
-        receipt.setUserAgent(userAgent);
-        receipt.setFeedbackNotes(feedbackNotes);
-        receipt.setConfirmedAt(LocalDateTime.now());
-        handoverReceiptRepository.save(receipt);
 
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("MMM dd, yyyy — HH:mm:ss 'EST'", Locale.ENGLISH);
         String finalDate = LocalDateTime.now().format(dtf);
@@ -467,9 +594,9 @@ public class BeneficiaryHandoverService {
                 "Asset Handover Successful",
                 "All legal digital inheritance files for Case " + resolvedCaseNumber + " have been successfully verified, released, and receipted by the beneficiary.",
                 new HandoverCompletedResponse.EstateDepositionTransReceipt(
-                        "Thanh Pham",
-                        "Linh Pham",
-                        "Minh Le",
+                        ownerName,
+                        beneficiaryName,
+                        executorName,
                         finalDate
                 ),
                 "https://vault-storage.legacyvault.io/receipts/RC-" + resolvedCaseNumber + "-FINAL.pdf?token=valid_receipt_sig"
@@ -488,24 +615,116 @@ public class BeneficiaryHandoverService {
         return "+1 (555) **** " + last3;
     }
 
+    private List<String> getAssignedAssetIdsForBeneficiary(List<Asset> ownerAssets, String beneficiaryContactId) {
+        if (ownerAssets == null || ownerAssets.isEmpty() || beneficiaryContactId == null
+                || assetAssignmentRepository == null || assignmentBeneficiaryRepository == null) {
+            return Collections.emptyList();
+        }
+        List<String> matched = new ArrayList<>();
+        for (Asset asset : ownerAssets) {
+            if (asset.getAssetId() == null) continue;
+            Optional<AssetAssignment> optAssignment = assetAssignmentRepository.findByAssetId(asset.getAssetId());
+            if (optAssignment.isEmpty()) continue;
+            List<AssignmentBeneficiary> links = assignmentBeneficiaryRepository
+                    .findByAssignmentId(optAssignment.get().getAssignmentId());
+            if (links != null && links.stream().anyMatch(l -> beneficiaryContactId.equals(l.getBeneficiaryContactId()))) {
+                matched.add(asset.getAssetId());
+            }
+        }
+        return matched;
+    }
+
+    private Set<String> collectAssignedBeneficiaryIds(List<Asset> ownerAssets) {
+        if (ownerAssets == null || ownerAssets.isEmpty()
+                || assetAssignmentRepository == null || assignmentBeneficiaryRepository == null) {
+            return Collections.emptySet();
+        }
+        Set<String> ids = new HashSet<>();
+        for (Asset asset : ownerAssets) {
+            if (asset.getAssetId() == null) continue;
+            assetAssignmentRepository.findByAssetId(asset.getAssetId()).ifPresent(assignment -> {
+                List<AssignmentBeneficiary> links = assignmentBeneficiaryRepository
+                        .findByAssignmentId(assignment.getAssignmentId());
+                if (links != null) {
+                    for (AssignmentBeneficiary link : links) {
+                        if (link.getBeneficiaryContactId() != null && !link.getBeneficiaryContactId().isBlank()) {
+                            ids.add(link.getBeneficiaryContactId());
+                        }
+                    }
+                }
+            });
+        }
+        return ids;
+    }
+
+    /**
+     * Resolves an authenticated principal ID (which may be either a contacts.contact_id or a users.user_id)
+     * to the matching Beneficiary Contact ID for the requested case.
+     */
+    private String resolveBeneficiaryContactId(String caseIdOrRef, String principalId) {
+        if (principalId == null || principalId.isBlank()) {
+            return principalId;
+        }
+        Optional<User> optUser = userRepository.findById(principalId);
+        if (optUser.isEmpty() || optUser.get().getEmail() == null || optUser.get().getEmail().isBlank()) {
+            return principalId;
+        }
+        String userEmail = optUser.get().getEmail().trim();
+        HandoverCase handoverCase = (caseIdOrRef != null && !caseIdOrRef.isBlank())
+                ? handoverCaseRepository.findByCaseNumber(caseIdOrRef)
+                        .or(() -> handoverCaseRepository.findById(caseIdOrRef))
+                        .orElse(null)
+                : null;
+        if (handoverCase != null && handoverCase.getOwnerId() != null) {
+            List<Contact> ownerContacts = contactRepository.findByOwnerId(handoverCase.getOwnerId());
+            if (ownerContacts != null) {
+                Optional<String> matched = ownerContacts.stream()
+                        .filter(c -> Boolean.TRUE.equals(c.getIsBeneficiary())
+                                && c.getEmail() != null
+                                && c.getEmail().trim().equalsIgnoreCase(userEmail))
+                        .sorted((a, b) -> Boolean.compare(
+                                "verified".equalsIgnoreCase(b.getStatus()),
+                                "verified".equalsIgnoreCase(a.getStatus())))
+                        .map(Contact::getContactId)
+                        .findFirst();
+                if (matched.isPresent()) {
+                    return matched.get();
+                }
+            }
+        }
+        List<Contact> byEmail = contactRepository.findByEmail(userEmail);
+        if (byEmail != null) {
+            Optional<String> matched = byEmail.stream()
+                    .filter(c -> Boolean.TRUE.equals(c.getIsBeneficiary()))
+                    .map(Contact::getContactId)
+                    .findFirst();
+            if (matched.isPresent()) {
+                return matched.get();
+            }
+        }
+        return principalId;
+    }
+
     private BeneficiaryClaimSession requireVerifiedFace(String beneficiaryContactId, String caseReference) {
+        String resolvedContactId = resolveBeneficiaryContactId(caseReference, beneficiaryContactId);
+        boolean strictBeneficiary = resolvedContactId != null && !resolvedContactId.equals(beneficiaryContactId);
         BeneficiaryClaimSession session;
         if (caseReference != null && !caseReference.isBlank()) {
             Optional<BeneficiaryClaimSession> claim = claimSessionRepository
-                    .findByCaseIdAndBeneficiaryContactId(caseReference, beneficiaryContactId);
+                    .findByCaseIdAndBeneficiaryContactId(caseReference, resolvedContactId);
             if (claim.isEmpty()) {
                 claim = handoverCaseRepository.findByCaseNumber(caseReference)
                         .flatMap(handoverCase -> {
                             Optional<BeneficiaryClaimSession> byContact = claimSessionRepository
-                                    .findByCaseIdAndBeneficiaryContactId(handoverCase.getCaseId(), beneficiaryContactId);
-                            if (byContact.isPresent()) {
+                                    .findByCaseIdAndBeneficiaryContactId(handoverCase.getCaseId(), resolvedContactId);
+                            if (byContact.isPresent() || strictBeneficiary) {
                                 return byContact;
                             }
-                            return findFallbackVerifiedClaimByCaseId(handoverCase.getCaseId(), beneficiaryContactId);
+                            return findFallbackVerifiedClaimByCaseId(handoverCase.getCaseId(), resolvedContactId);
                         });
             }
-            if (claim.isEmpty()) {
-                claim = findFallbackVerifiedClaimByCaseId(caseReference, beneficiaryContactId);
+            if (claim.isEmpty() && !strictBeneficiary) {
+                claim = findFallbackVerifiedClaimByCaseId(caseReference, resolvedContactId);
             }
             session = claim
                     .filter(item -> Boolean.TRUE.equals(item.getIdentityVerified()))
@@ -514,12 +733,12 @@ public class BeneficiaryHandoverService {
                             "Verify the beneficiary one-time code for this case before accessing inherited assets"));
         } else {
             List<BeneficiaryClaimSession> activeClaims = claimSessionRepository
-                    .findByBeneficiaryContactIdAndTokenStatus(beneficiaryContactId, "ACTIVE")
+                    .findByBeneficiaryContactIdAndTokenStatus(resolvedContactId, "ACTIVE")
                     .stream()
                     .filter(item -> Boolean.TRUE.equals(item.getIdentityVerified()))
                     .toList();
-            if (activeClaims.isEmpty()) {
-                activeClaims = findFallbackLatestVerifiedClaim(beneficiaryContactId)
+            if (activeClaims.isEmpty() && !strictBeneficiary) {
+                activeClaims = findFallbackLatestVerifiedClaim(resolvedContactId)
                         .map(List::of)
                         .orElse(Collections.emptyList());
             }
@@ -542,30 +761,37 @@ public class BeneficiaryHandoverService {
      */
     private Optional<BeneficiaryClaimSession> resolveSessionForOtpVerification(
             String caseRef, String authenticatedUserId) {
+        String resolvedContactId = resolveBeneficiaryContactId(caseRef, authenticatedUserId);
+        boolean strictBeneficiary = resolvedContactId != null && !resolvedContactId.equals(authenticatedUserId);
+
         if (caseRef != null && !caseRef.isBlank()) {
             String targetCaseId = handoverCaseRepository.findByCaseNumber(caseRef)
                     .map(HandoverCase::getCaseId)
                     .orElse(caseRef);
-            if (authenticatedUserId != null && !authenticatedUserId.isBlank()) {
+            if (resolvedContactId != null && !resolvedContactId.isBlank()) {
                 Optional<BeneficiaryClaimSession> direct = claimSessionRepository
-                        .findByCaseIdAndBeneficiaryContactId(targetCaseId, authenticatedUserId);
-                if (direct.isPresent()) {
+                        .findByCaseIdAndBeneficiaryContactId(targetCaseId, resolvedContactId);
+                if (direct.isPresent() || strictBeneficiary) {
                     return direct;
                 }
             }
-            List<BeneficiaryClaimSession> byCase = claimSessionRepository.findByCaseId(targetCaseId);
-            if (byCase != null && !byCase.isEmpty()) {
-                return byCase.stream()
-                        .filter(s -> "ACTIVE".equalsIgnoreCase(s.getTokenStatus()))
-                        .findFirst()
-                        .or(() -> Optional.of(byCase.get(0)));
+            if (!strictBeneficiary) {
+                List<BeneficiaryClaimSession> byCase = claimSessionRepository.findByCaseId(targetCaseId);
+                if (byCase != null && !byCase.isEmpty()) {
+                    return byCase.stream()
+                            .filter(s -> "ACTIVE".equalsIgnoreCase(s.getTokenStatus()))
+                            .findFirst()
+                            .or(() -> Optional.of(byCase.get(0)));
+                }
             }
         }
-        List<BeneficiaryClaimSession> all = claimSessionRepository.findAll();
-        if (all != null && !all.isEmpty()) {
-            return all.stream()
-                    .filter(s -> "ACTIVE".equalsIgnoreCase(s.getTokenStatus()))
-                    .findFirst();
+        if (!strictBeneficiary) {
+            List<BeneficiaryClaimSession> all = claimSessionRepository.findAll();
+            if (all != null && !all.isEmpty()) {
+                return all.stream()
+                        .filter(s -> "ACTIVE".equalsIgnoreCase(s.getTokenStatus()))
+                        .findFirst();
+            }
         }
         return Optional.empty();
     }

@@ -4,16 +4,21 @@ import com.legacyvault.dto.BeneficiaryFaceEnrollmentRequest;
 import com.legacyvault.dto.BeneficiaryFaceVerificationRequest;
 import com.legacyvault.entity.BeneficiaryClaimSession;
 import com.legacyvault.entity.BeneficiaryFaceEnrollment;
+import com.legacyvault.entity.Contact;
 import com.legacyvault.entity.HandoverCase;
+import com.legacyvault.entity.User;
 import com.legacyvault.repository.BeneficiaryClaimSessionRepository;
 import com.legacyvault.repository.BeneficiaryFaceEnrollmentRepository;
+import com.legacyvault.repository.ContactRepository;
 import com.legacyvault.repository.HandoverCaseRepository;
+import com.legacyvault.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -182,5 +187,67 @@ class BeneficiaryFaceVerificationServiceTest {
 
     private double[] toPrimitive(List<Double> values) {
         return values.stream().mapToDouble(Double::doubleValue).toArray();
+    }
+
+    @Test
+    void secondHandoverCaseInheritsFaceEnrollmentFromSameBeneficiaryEmailWithoutConflict() {
+        String userId = "user-bene-1";
+        String oldContactId = "contact-old-1";
+        String newContactId = "contact-new-2";
+        String email = "bene@example.com";
+
+        UserRepository mockUserRepo = mock(UserRepository.class);
+        ContactRepository mockContactRepo = mock(ContactRepository.class);
+        ReflectionTestUtils.setField(service, "userRepository", mockUserRepo);
+        ReflectionTestUtils.setField(service, "contactRepository", mockContactRepo);
+
+        User user = new User();
+        user.setId(userId);
+        user.setEmail(email);
+
+        Contact oldContact = new Contact("owner-1", "Beneficiary One", "Child", email, null, true, false, "verified");
+        oldContact.setContactId(oldContactId);
+        Contact newContact = new Contact("owner-2", "Beneficiary One", "Child", email, null, true, false, "verified");
+        newContact.setContactId(newContactId);
+
+        HandoverCase secondCase = new HandoverCase("CASE-2", "owner-2", "dms-2");
+        secondCase.setCaseId("case-uuid-2");
+
+        BeneficiaryClaimSession secondClaim = new BeneficiaryClaimSession();
+        secondClaim.setCaseId("case-uuid-2");
+        secondClaim.setBeneficiaryContactId(newContactId);
+        secondClaim.setIdentityVerified(true);
+        secondClaim.setTokenStatus("ACTIVE");
+        secondClaim.setKycFacialStatus("PENDING_SCAN");
+
+        BeneficiaryFaceEnrollment oldProfile = new BeneficiaryFaceEnrollment(
+                oldContactId,
+                new FaceEmbeddingEncryptionService(TEST_KEY).encrypt(toPrimitive(embedding(0.25))),
+                "human-3.3.6-face-description-v1",
+                LocalDateTime.now().minusDays(1));
+
+        when(mockUserRepo.findById(userId)).thenReturn(Optional.of(user));
+        when(handoverCaseRepository.findByCaseNumber("CASE-2")).thenReturn(Optional.of(secondCase));
+        when(mockContactRepo.findByOwnerId("owner-2")).thenReturn(List.of(newContact));
+        when(claimSessionRepository.findByCaseIdAndBeneficiaryContactId("CASE-2", newContactId))
+                .thenReturn(Optional.empty());
+        when(claimSessionRepository.findByCaseIdAndBeneficiaryContactId("case-uuid-2", newContactId))
+                .thenReturn(Optional.of(secondClaim));
+        when(enrollmentRepository.findByBeneficiaryContactId(newContactId)).thenReturn(Optional.empty());
+        when(mockContactRepo.findById(newContactId)).thenReturn(Optional.of(newContact));
+        when(mockContactRepo.findByEmail(email)).thenReturn(List.of(oldContact, newContact));
+        when(mockContactRepo.findByEmailIgnoreCaseAndStatus(email, "verified"))
+                .thenReturn(List.of(oldContact, newContact));
+        when(enrollmentRepository.findByBeneficiaryContactId(oldContactId)).thenReturn(Optional.of(oldProfile));
+
+        var status = service.getEnrollmentStatus(userId, "CASE-2");
+        assertTrue(status.enrolled());
+        verify(enrollmentRepository).save(argThat(saved -> newContactId.equals(saved.getBeneficiaryContactId())));
+
+        when(enrollmentRepository.findByBeneficiaryContactId(newContactId)).thenReturn(Optional.of(
+                new BeneficiaryFaceEnrollment(newContactId, oldProfile.getEncryptedEmbedding(),
+                        "human-3.3.6-face-description-v1", oldProfile.getConsentedAt())));
+        var checkSession = service.createAccessSession("CASE-2", userId);
+        assertNotNull(checkSession.sessionId());
     }
 }

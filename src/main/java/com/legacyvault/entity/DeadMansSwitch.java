@@ -18,7 +18,7 @@ public class DeadMansSwitch {
     private int checkInIntervalSeconds = 60;
 
     @Column(name = "grace_period_seconds", nullable = false)
-    private int gracePeriodSeconds = 120;
+    private int gracePeriodSeconds = 60;
 
     @Column(name = "status", length = 50)
     private String status = "active";

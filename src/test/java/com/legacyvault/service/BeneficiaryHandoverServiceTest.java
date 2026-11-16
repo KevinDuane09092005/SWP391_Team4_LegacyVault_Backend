@@ -101,15 +101,59 @@ class BeneficiaryHandoverServiceTest {
 
     @Test
     void testLoginWithCode_Success() {
-        when(contactRepository.findFirstByEmail("linh.pham@beneficiary.com")).thenReturn(Optional.of(mockContact));
-        when(claimSessionRepository.findByAccessCodeHash(anyString())).thenReturn(Optional.empty());
+        String accessCode = "LV-1042-7K9P4M2X";
+        BeneficiaryClaimSession activeSession = new BeneficiaryClaimSession();
+        activeSession.setCaseId("case-uuid-1042");
+        activeSession.setBeneficiaryContactId("beneficiary-uuid-1");
+        activeSession.setAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode));
+        activeSession.setClaimTokenHash("claim-token-hash-1");
+        activeSession.setTokenStatus("ACTIVE");
 
-        BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode("linh.pham@beneficiary.com", "LV-1042-HANDOVER-SECURE");
+        when(claimSessionRepository.findByAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode)))
+                .thenReturn(Optional.of(activeSession));
+        when(contactRepository.findById("beneficiary-uuid-1")).thenReturn(Optional.of(mockContact));
+
+        BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode(
+                "linh.pham@beneficiary.com", accessCode);
 
         assertNotNull(response);
         assertEquals("Linh Pham", response.getBeneficiaryName());
         assertTrue(response.isRequiresOtp());
-        verify(emailService).sendOtpEmail(eq("linh.pham@beneficiary.com"), eq("482916"));
+        ArgumentCaptor<String> otpCaptor = ArgumentCaptor.forClass(String.class);
+        verify(emailService).sendOtpEmail(eq("linh.pham@beneficiary.com"), otpCaptor.capture());
+        assertTrue(otpCaptor.getValue().matches("^\\d{6}$"));
+        assertEquals(HandoverExecutionService.sha256Hex(otpCaptor.getValue()), activeSession.getOtpCodeHash());
+        verify(claimSessionRepository).save(activeSession);
+    }
+
+    @Test
+    void testLoginWithCode_InvalidAccessCode_ThrowsException() {
+        when(claimSessionRepository.findByAccessCodeHash(anyString())).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () ->
+                beneficiaryHandoverService.loginWithCode("linh.pham@beneficiary.com", "WRONG-CODE"));
+
+        verify(emailService, never()).sendOtpEmail(anyString(), anyString());
+        verify(claimSessionRepository, never()).save(any(BeneficiaryClaimSession.class));
+    }
+
+    @Test
+    void testLoginWithCode_EmailMismatch_ThrowsException() {
+        String accessCode = "LV-1042-7K9P4M2X";
+        BeneficiaryClaimSession activeSession = new BeneficiaryClaimSession();
+        activeSession.setCaseId("case-uuid-1042");
+        activeSession.setBeneficiaryContactId("beneficiary-uuid-1");
+        activeSession.setAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode));
+        activeSession.setTokenStatus("ACTIVE");
+
+        when(claimSessionRepository.findByAccessCodeHash(HandoverExecutionService.sha256Hex(accessCode)))
+                .thenReturn(Optional.of(activeSession));
+        when(contactRepository.findById("beneficiary-uuid-1")).thenReturn(Optional.of(mockContact));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                beneficiaryHandoverService.loginWithCode("other.person@example.com", accessCode));
+
+        verify(emailService, never()).sendOtpEmail(anyString(), anyString());
     }
 
     @Test
@@ -249,6 +293,69 @@ class BeneficiaryHandoverServiceTest {
         assertThrows(org.springframework.web.server.ResponseStatusException.class,
                 () -> beneficiaryHandoverService.getAuthorizedAssets(
                         "another-case-id", "beneficiary-uuid-1"));
+    }
+
+    @Test
+    void testConfirmReceivedAndCloseCase_MultiBeneficiary_KeepsCaseOpenUntilAllConfirm() {
+        stubVerifiedFaceClaim();
+        mockCase.setStatus("RELEASED");
+
+        Asset asset1 = new Asset("owner-uuid-1", "bank_account", "Asset 1", "desc", "enc1", null);
+        asset1.setAssetId("asset-1");
+        Asset asset2 = new Asset("owner-uuid-1", "crypto_wallet", "Asset 2", "desc", "enc2", null);
+        asset2.setAssetId("asset-2");
+
+        AssetAssignment assign1 = new AssetAssignment("asset-1", "exec-1", "inst");
+        assign1.setAssignmentId("assign-1");
+        AssetAssignment assign2 = new AssetAssignment("asset-2", "exec-1", "inst");
+        assign2.setAssignmentId("assign-2");
+
+        when(handoverCaseRepository.findById("case-uuid-1042")).thenReturn(Optional.of(mockCase));
+        when(assetRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(asset1, asset2));
+        when(assetAssignmentRepository.findByAssetId("asset-1")).thenReturn(Optional.of(assign1));
+        when(assetAssignmentRepository.findByAssetId("asset-2")).thenReturn(Optional.of(assign2));
+        when(assignmentBeneficiaryRepository.findByAssignmentId("assign-1"))
+                .thenReturn(List.of(new AssignmentBeneficiary("assign-1", "beneficiary-uuid-1")));
+        when(assignmentBeneficiaryRepository.findByAssignmentId("assign-2"))
+                .thenReturn(List.of(new AssignmentBeneficiary("assign-2", "beneficiary-uuid-2")));
+        when(handoverReceiptRepository.findByCaseId("case-uuid-1042")).thenReturn(List.of());
+
+        HandoverCompletedResponse firstConfirm = beneficiaryHandoverService.confirmReceivedAndCloseCase(
+                "beneficiary-uuid-1", true, "127.0.0.1", "Mozilla/5.0");
+
+        assertEquals("COMPLETED", firstConfirm.getStatus());
+        assertEquals("RELEASED", mockCase.getStatus());
+        verify(handoverReceiptRepository, times(1)).save(any(HandoverReceipt.class));
+
+        // Now simulate Beneficiary 1 receipt already saved, and Beneficiary 2 confirms
+        BeneficiaryClaimSession claim2 = new BeneficiaryClaimSession();
+        claim2.setBeneficiaryContactId("beneficiary-uuid-2");
+        claim2.setCaseId("case-uuid-1042");
+        claim2.setTokenStatus("ACTIVE");
+        claim2.setIdentityVerified(true);
+        claim2.setKycFacialStatus("VERIFIED");
+        when(claimSessionRepository.findByBeneficiaryContactIdAndTokenStatus(
+                "beneficiary-uuid-2", "ACTIVE")).thenReturn(List.of(claim2));
+        HandoverReceipt receipt1 = new HandoverReceipt("case-uuid-1042", "asset-1", "beneficiary-uuid-1", "hash-1");
+        when(handoverReceiptRepository.findByCaseId("case-uuid-1042")).thenReturn(List.of(receipt1));
+
+        beneficiaryHandoverService.confirmReceivedAndCloseCase(
+                "beneficiary-uuid-2", true, "127.0.0.1", "Mozilla/5.0");
+
+        assertEquals("COMPLETED", mockCase.getStatus());
+    }
+
+    @Test
+    void testGetDecryptedAssetDetail_ForbiddenWhenAssignedToDifferentBeneficiary() {
+        stubVerifiedFaceClaim();
+        AssetAssignment otherAssignment = new AssetAssignment("asset-other", "exec-1", "inst");
+        otherAssignment.setAssignmentId("assign-other");
+        when(assetAssignmentRepository.findByAssetId("asset-other")).thenReturn(Optional.of(otherAssignment));
+        when(assignmentBeneficiaryRepository.findByAssignmentId("assign-other"))
+                .thenReturn(List.of(new AssignmentBeneficiary("assign-other", "beneficiary-uuid-2")));
+
+        assertThrows(org.springframework.web.server.ResponseStatusException.class, () ->
+                beneficiaryHandoverService.getDecryptedAssetDetail("asset-other", "beneficiary-uuid-1"));
     }
 
     private void stubVerifiedFaceClaim() {

@@ -48,14 +48,12 @@ public class DmsService {
     public DmsStatusResponse getDmsStatus(String ownerId) {
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
                 .orElseGet(() -> {
-                    DeadMansSwitch defaultDms = new DeadMansSwitch(ownerId, 60, 120);
+                    DeadMansSwitch defaultDms = new DeadMansSwitch(ownerId, 60, 60);
                     return dmsRepository.save(defaultDms);
                 });
 
-        // Tự động chuyển đổi các bản ghi cấu hình test cũ (30s/50s) sang mặc định kiểm thử mới (60s/120s)
-        if (dms.getCheckInIntervalSeconds() == 30 && dms.getGracePeriodSeconds() == 50) {
-            dms.setCheckInIntervalSeconds(60);
-            dms.setGracePeriodSeconds(120);
+        // Tự động chuyển đổi các bản ghi cấu hình test cũ (30s/50s hoặc 60s/120s) sang mặc định kiểm thử mới (60s/60s)
+        if (applyLegacyTestDefaultMigration(dms)) {
             if (dms.getLastCheckInAt() != null) {
                 dms.setNextCheckInAt(dms.getLastCheckInAt().plusSeconds(60));
             }
@@ -105,12 +103,9 @@ public class DmsService {
     @Transactional
     public CheckInResponse checkIn(String ownerId, String checkInType) {
         DeadMansSwitch dms = dmsRepository.findByOwnerId(ownerId)
-                .orElseGet(() -> new DeadMansSwitch(ownerId, 60, 120));
+                .orElseGet(() -> new DeadMansSwitch(ownerId, 60, 60));
 
-        if (dms.getCheckInIntervalSeconds() == 30 && dms.getGracePeriodSeconds() == 50) {
-            dms.setCheckInIntervalSeconds(60);
-            dms.setGracePeriodSeconds(120);
-        }
+        applyLegacyTestDefaultMigration(dms);
 
         LocalDateTime now = LocalDateTime.now();
         dms.setLastCheckInAt(now);
@@ -211,5 +206,19 @@ public class DmsService {
         }
 
         return response;
+    }
+
+    /**
+     * Migrates legacy testing-mode defaults (30s/50s or 60s/120s) to the current 60s/60s test default.
+     */
+    private boolean applyLegacyTestDefaultMigration(DeadMansSwitch dms) {
+        int interval = dms.getCheckInIntervalSeconds();
+        int grace = dms.getGracePeriodSeconds();
+        if ((interval == 30 && grace == 50) || (interval == 60 && grace == 120)) {
+            dms.setCheckInIntervalSeconds(60);
+            dms.setGracePeriodSeconds(60);
+            return true;
+        }
+        return false;
     }
 }

@@ -167,11 +167,6 @@ public class AuthServiceTest {
 
     @Test
     void testGetAvailableContexts_IncludesVaultOwnerAndInvitedExecutorBeneficiary() {
-        User johnDoe = new User();
-        johnDoe.setId("owner-john");
-        johnDoe.setFullName("John Doe");
-        johnDoe.setEmail("john@example.com");
-
         Contact executorContact = new Contact(
                 "owner-john", "Test User", "Attorney", "test@example.com", null, false, true, "verified");
         Contact beneficiaryContact = new Contact(
@@ -179,7 +174,6 @@ public class AuthServiceTest {
 
         when(contactRepository.findByEmailIgnoreCaseAndStatus("test@example.com", "verified"))
                 .thenReturn(List.of(executorContact, beneficiaryContact));
-        when(userRepository.findById("owner-john")).thenReturn(Optional.of(johnDoe));
 
         List<RoleContextDto> contexts = authService.getAvailableContexts(testUser);
 
@@ -188,11 +182,49 @@ public class AuthServiceTest {
         assertEquals("Vault Owner", contexts.get(0).label());
 
         assertEquals("digital_executor", contexts.get(1).roleCode());
+        assertEquals("SYSTEM", contexts.get(1).roleScope());
         assertEquals("Executor Dashboard", contexts.get(1).label());
-        assertEquals("Executor for John Doe", contexts.get(1).subtitle());
+        assertNull(contexts.get(1).subtitle());
+        assertNull(contexts.get(1).vaultOwnerId());
 
         assertEquals("beneficiary", contexts.get(2).roleCode());
+        assertEquals("SYSTEM", contexts.get(2).roleScope());
         assertEquals("Beneficiary Dashboard", contexts.get(2).label());
-        assertEquals("Beneficiary for John Doe", contexts.get(2).subtitle());
+        assertNull(contexts.get(2).subtitle());
+        assertNull(contexts.get(2).vaultOwnerId());
+    }
+
+    @Test
+    void testGetAvailableContexts_MultipleOwnersProduceSingleExecutorAndBeneficiaryContext() {
+        Contact execOwner1 = new Contact(
+                "owner-1", "Test User", "Attorney", "test@example.com", null, false, true, "verified");
+        Contact execOwner2 = new Contact(
+                "owner-2", "Test User", "Executor", "test@example.com", null, false, true, "verified");
+        Contact beneOwner1 = new Contact(
+                "owner-1", "Test User", "Sibling", "test@example.com", null, true, false, "verified");
+        Contact beneOwner2 = new Contact(
+                "owner-3", "Test User", "Child", "test@example.com", null, true, false, "verified");
+        Contact selfInvite = new Contact(
+                "test-uuid", "Test User", "Self", "test@example.com", null, true, true, "verified");
+
+        when(contactRepository.findByEmailIgnoreCaseAndStatus("test@example.com", "verified"))
+                .thenReturn(List.of(execOwner1, execOwner2, beneOwner1, beneOwner2, selfInvite));
+
+        List<RoleContextDto> contexts = authService.getAvailableContexts(testUser);
+
+        assertEquals(3, contexts.size());
+        assertEquals("vault_owner", contexts.get(0).roleCode());
+
+        assertEquals("digital_executor", contexts.get(1).roleCode());
+        assertEquals("SYSTEM", contexts.get(1).roleScope());
+        assertEquals("Executor Dashboard", contexts.get(1).label());
+        assertNull(contexts.get(1).subtitle());
+        assertNull(contexts.get(1).vaultOwnerId());
+
+        assertEquals("beneficiary", contexts.get(2).roleCode());
+        assertEquals("SYSTEM", contexts.get(2).roleScope());
+        assertEquals("Beneficiary Dashboard", contexts.get(2).label());
+        assertNull(contexts.get(2).subtitle());
+        assertNull(contexts.get(2).vaultOwnerId());
     }
 }

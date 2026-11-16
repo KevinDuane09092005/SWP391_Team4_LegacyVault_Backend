@@ -192,34 +192,43 @@ public class AuthService {
         if (contactRepository != null && user.getEmail() != null && !user.getEmail().isBlank()) {
             List<Contact> verifiedLinks = contactRepository.findByEmailIgnoreCaseAndStatus(user.getEmail().trim(), "verified");
             if (verifiedLinks != null) {
+                boolean hasExecutorLink = false;
+                boolean hasBeneficiaryLink = false;
+
                 for (Contact c : verifiedLinks) {
                     if (user.getId() != null && user.getId().equals(c.getOwnerId())) {
                         continue; // Owner cannot invite themselves
                     }
-                    String ownerName = userRepository.findById(c.getOwnerId())
-                            .map(User::getFullName)
-                            .orElse("Vault Owner");
-
                     if (Boolean.TRUE.equals(c.getIsExecutor())) {
-                        contexts.add(new RoleContextDto(
-                                "digital_executor",
-                                "VAULT",
-                                "Executor Dashboard",
-                                "Executor for " + ownerName,
-                                c.getOwnerId(),
-                                ownerName
-                        ));
+                        hasExecutorLink = true;
                     }
                     if (Boolean.TRUE.equals(c.getIsBeneficiary())) {
-                        contexts.add(new RoleContextDto(
-                                "beneficiary",
-                                "VAULT",
-                                "Beneficiary Dashboard",
-                                "Beneficiary for " + ownerName,
-                                c.getOwnerId(),
-                                ownerName
-                        ));
+                        hasBeneficiaryLink = true;
                     }
+                    if (hasExecutorLink && hasBeneficiaryLink) {
+                        break;
+                    }
+                }
+
+                if (hasExecutorLink) {
+                    contexts.add(new RoleContextDto(
+                            "digital_executor",
+                            "SYSTEM",
+                            "Executor Dashboard",
+                            null,
+                            null,
+                            null
+                    ));
+                }
+                if (hasBeneficiaryLink) {
+                    contexts.add(new RoleContextDto(
+                            "beneficiary",
+                            "SYSTEM",
+                            "Beneficiary Dashboard",
+                            null,
+                            null,
+                            null
+                    ));
                 }
             }
         }

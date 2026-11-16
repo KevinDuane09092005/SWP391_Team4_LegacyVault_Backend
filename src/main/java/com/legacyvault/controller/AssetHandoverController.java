@@ -41,9 +41,20 @@ public class AssetHandoverController {
     }
 
     @GetMapping("/cases/{caseId}/details")
-    public ResponseEntity<?> getHandoverDetails(@PathVariable String caseId) {
+    public ResponseEntity<?> getHandoverDetails(
+            @PathVariable String caseId,
+            @RequestParam(name = "for_beneficiary", required = false) Boolean forBeneficiary,
+            @RequestParam(name = "beneficiary_email", required = false) String beneficiaryEmail,
+            Authentication authentication) {
         try {
-            HandoverDetailsResponse response = handoverExecutionService.getHandoverDetails(caseId);
+            HandoverDetailsResponse response;
+            if (Boolean.TRUE.equals(forBeneficiary) || (beneficiaryEmail != null && !beneficiaryEmail.isBlank())) {
+                String viewerId = authentication != null ? authentication.getName() : null;
+                response = handoverExecutionService.getHandoverDetailsForBeneficiary(
+                        caseId, viewerId, beneficiaryEmail);
+            } else {
+                response = handoverExecutionService.getHandoverDetails(caseId);
+            }
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -65,6 +76,17 @@ public class AssetHandoverController {
     // 2. BENEFICIARY PORTAL AUTHENTICATION & KYC
     // =========================================================================
 
+    @GetMapping("/beneficiary/dashboard")
+    public ResponseEntity<?> getBeneficiaryHandoverDashboard(Authentication authentication) {
+        try {
+            String userId = authentication != null ? authentication.getName() : "beneficiary-user-id";
+            ExecutorHandoverDashboardResponse response = handoverExecutionService.getBeneficiaryDashboard(userId);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @GetMapping("/beneficiary/portal-context")
     public ResponseEntity<?> getBeneficiaryPortalContext(@RequestParam(name = "case_ref", defaultValue = "LV-1042") String caseRef) {
         try {
@@ -79,7 +101,7 @@ public class AssetHandoverController {
     public ResponseEntity<?> beneficiaryLoginWithCode(@Valid @RequestBody BeneficiaryLoginRequest request) {
         try {
             BeneficiaryLoginSuccessResponse response = beneficiaryHandoverService.loginWithCode(
-                    request.getEmail(), request.getAccessCode());
+                    request.getEmail(), request.getAccessCode(), request.getCaseRef());
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

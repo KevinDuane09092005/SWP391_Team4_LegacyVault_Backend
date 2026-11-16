@@ -9,6 +9,7 @@ import com.legacyvault.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -50,6 +51,9 @@ class HandoverExecutionServiceTest {
     @Mock
     private EncryptionService encryptionService;
 
+    @Mock
+    private HandoverReceiptRepository handoverReceiptRepository;
+
     @InjectMocks
     private HandoverExecutionService handoverExecutionService;
 
@@ -76,6 +80,7 @@ class HandoverExecutionServiceTest {
 
     @Test
     void testGetExecutorDashboard() {
+        when(userRepository.findById("executor-1")).thenReturn(Optional.empty());
         when(handoverCaseRepository.findAll()).thenReturn(List.of(mockCase));
         when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
         when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary));
@@ -88,6 +93,88 @@ class HandoverExecutionServiceTest {
         assertEquals("LV-1042", dashboard.getCases().get(0).getCaseNumber());
         assertEquals("Thanh Pham", dashboard.getCases().get(0).getVaultOwner());
         assertEquals("Linh Pham", dashboard.getCases().get(0).getBeneficiary());
+    }
+
+    @Test
+    void testGetExecutorDashboard_FiltersByDesignatedOwners() {
+        User executorUser = new User();
+        executorUser.setId("exec-user-1");
+        executorUser.setEmail("exec@example.com");
+        executorUser.setRole("vault_owner");
+
+        User owner2 = new User();
+        owner2.setId("owner-uuid-2");
+        owner2.setFullName("Lan Tran");
+
+        HandoverCase case2 = new HandoverCase("LV-2001", "owner-uuid-2", "dms-uuid-2");
+        case2.setCaseId("case-uuid-2001");
+        case2.setStatus("INITIATED");
+
+        HandoverCase undesignatedCase = new HandoverCase("LV-9999", "owner-uuid-3", "dms-uuid-3");
+        undesignatedCase.setCaseId("case-uuid-9999");
+        undesignatedCase.setStatus("APPROVED");
+
+        Contact execForOwner1 = new Contact("owner-uuid-1", "Minh Le", "Executor", "exec@example.com", null, false, true, "verified");
+        Contact execForOwner2 = new Contact("owner-uuid-2", "Minh Le", "Executor", "exec@example.com", null, false, true, "verified");
+        Contact beneficiaryOnlyForOwner3 = new Contact("owner-uuid-3", "Minh Le", "Beneficiary", "exec@example.com", null, true, false, "verified");
+
+        when(userRepository.findById("exec-user-1")).thenReturn(Optional.of(executorUser));
+        when(contactRepository.findByEmailIgnoreCaseAndStatus("exec@example.com", "verified"))
+                .thenReturn(List.of(execForOwner1, execForOwner2, beneficiaryOnlyForOwner3));
+        when(handoverCaseRepository.findAll()).thenReturn(List.of(mockCase, case2, undesignatedCase));
+        when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
+        when(userRepository.findById("owner-uuid-2")).thenReturn(Optional.of(owner2));
+        when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary));
+        when(contactRepository.findByOwnerId("owner-uuid-2")).thenReturn(Collections.emptyList());
+
+        ExecutorHandoverDashboardResponse dashboard = handoverExecutionService.getExecutorDashboard("exec-user-1");
+
+        assertNotNull(dashboard);
+        assertEquals(2, dashboard.getMetrics().getTotalHandoverCases());
+        assertEquals(2, dashboard.getCases().size());
+        assertEquals(List.of("LV-1042", "LV-2001"),
+                dashboard.getCases().stream().map(ExecutorHandoverDashboardResponse.HandoverCaseTableRow::getCaseNumber).toList());
+    }
+
+    @Test
+    void testGetBeneficiaryDashboard_FiltersByDesignatedOwners() {
+        User beneficiaryUser = new User();
+        beneficiaryUser.setId("bene-user-1");
+        beneficiaryUser.setEmail("linh.pham@beneficiary.com");
+        beneficiaryUser.setRole("vault_owner");
+
+        User owner2 = new User();
+        owner2.setId("owner-uuid-2");
+        owner2.setFullName("Lan Tran");
+
+        HandoverCase case2 = new HandoverCase("LV-2001", "owner-uuid-2", "dms-uuid-2");
+        case2.setCaseId("case-uuid-2001");
+        case2.setStatus("RELEASED");
+
+        HandoverCase undesignatedCase = new HandoverCase("LV-9999", "owner-uuid-3", "dms-uuid-3");
+        undesignatedCase.setCaseId("case-uuid-9999");
+        undesignatedCase.setStatus("APPROVED");
+
+        Contact beneForOwner1 = new Contact("owner-uuid-1", "Linh Pham", "Daughter", "linh.pham@beneficiary.com", null, true, false, "verified");
+        Contact beneForOwner2 = new Contact("owner-uuid-2", "Linh Pham", "Niece", "linh.pham@beneficiary.com", null, true, false, "verified");
+        Contact execOnlyForOwner3 = new Contact("owner-uuid-3", "Linh Pham", "Executor", "linh.pham@beneficiary.com", null, false, true, "verified");
+
+        when(userRepository.findById("bene-user-1")).thenReturn(Optional.of(beneficiaryUser));
+        when(contactRepository.findByEmailIgnoreCaseAndStatus("linh.pham@beneficiary.com", "verified"))
+                .thenReturn(List.of(beneForOwner1, beneForOwner2, execOnlyForOwner3));
+        when(handoverCaseRepository.findAll()).thenReturn(List.of(mockCase, case2, undesignatedCase));
+        when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
+        when(userRepository.findById("owner-uuid-2")).thenReturn(Optional.of(owner2));
+        when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary));
+        when(contactRepository.findByOwnerId("owner-uuid-2")).thenReturn(List.of(beneForOwner2));
+
+        ExecutorHandoverDashboardResponse dashboard = handoverExecutionService.getBeneficiaryDashboard("bene-user-1");
+
+        assertNotNull(dashboard);
+        assertEquals(2, dashboard.getMetrics().getTotalHandoverCases());
+        assertEquals(2, dashboard.getCases().size());
+        assertEquals(List.of("LV-1042", "LV-2001"),
+                dashboard.getCases().stream().map(ExecutorHandoverDashboardResponse.HandoverCaseTableRow::getCaseNumber).toList());
     }
 
     @Test
@@ -118,10 +205,24 @@ class HandoverExecutionServiceTest {
 
         assertNotNull(response);
         assertEquals("LV-1042", response.getCaseNumber());
-        assertEquals("LV-1042-HANDOVER-SECURE", response.getAccessCode());
+        assertNull(response.getAccessCode());
         assertEquals("linh.pham@beneficiary.com", response.getNotificationSentTo());
         assertEquals("IN PROGRESS", mockCase.getStatus());
-        verify(emailService).sendHandoverAccessCodeEmail(eq("linh.pham@beneficiary.com"), eq("Linh Pham"), eq("Thanh Pham"), eq("LV-1042"), eq("LV-1042-HANDOVER-SECURE"));
+
+        ArgumentCaptor<String> accessCodeCaptor = ArgumentCaptor.forClass(String.class);
+        verify(emailService).sendHandoverAccessCodeEmail(
+                eq("linh.pham@beneficiary.com"),
+                eq("Linh Pham"),
+                eq("Thanh Pham"),
+                eq("LV-1042"),
+                accessCodeCaptor.capture());
+        String sentAccessCode = accessCodeCaptor.getValue();
+        assertNotNull(sentAccessCode);
+        assertTrue(sentAccessCode.matches("^LV-1042-[A-Z0-9]{8}$"), "Expected random access code format, got: " + sentAccessCode);
+
+        ArgumentCaptor<BeneficiaryClaimSession> sessionCaptor = ArgumentCaptor.forClass(BeneficiaryClaimSession.class);
+        verify(claimSessionRepository).save(sessionCaptor.capture());
+        assertEquals(HandoverExecutionService.sha256Hex(sentAccessCode), sessionCaptor.getValue().getAccessCodeHash());
     }
 
     @Test
@@ -158,5 +259,67 @@ class HandoverExecutionServiceTest {
         assertEquals("RELEASED", result.get("status"));
         assertEquals("RELEASED", mockCase.getStatus());
         verify(handoverCaseRepository).save(mockCase);
+    }
+
+    @Test
+    void testGetHandoverDetailsForBeneficiary_FiltersOnlyAssignedAssetsAndReturnsEmptyWhenUnassigned() {
+        mockCase.setStatus("RELEASED");
+        Contact beneficiaryB = new Contact("owner-uuid-1", "Binh Tran", "Son", "binh@beneficiary.com", null, true, false, "verified");
+        beneficiaryB.setContactId("beneficiary-uuid-2");
+        Contact beneficiaryC = new Contact("owner-uuid-1", "Chi Le", "Sister", "chi@beneficiary.com", null, true, false, "verified");
+        beneficiaryC.setContactId("beneficiary-uuid-3");
+        mockBeneficiary.setStatus("verified");
+
+        Asset assetA = new Asset("owner-uuid-1", "bank_account", "Asset For Linh", "desc A", "encA", null);
+        assetA.setAssetId("asset-a");
+        Asset assetB = new Asset("owner-uuid-1", "crypto_wallet", "Asset For Binh", "desc B", "encB", null);
+        assetB.setAssetId("asset-b");
+        Asset assetC = new Asset("owner-uuid-1", "document", "Unassigned Asset", "desc C", "encC", null);
+        assetC.setAssetId("asset-c");
+
+        AssetAssignment assignA = new AssetAssignment("asset-a", "exec-1", "inst");
+        assignA.setAssignmentId("assign-a");
+        AssetAssignment assignB = new AssetAssignment("asset-b", "exec-1", "inst");
+        assignB.setAssignmentId("assign-b");
+
+        when(handoverCaseRepository.findByCaseNumber("LV-1042")).thenReturn(Optional.of(mockCase));
+        when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
+        when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary, beneficiaryB, beneficiaryC));
+        when(assetRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(assetA, assetB, assetC));
+        when(assetAssignmentRepository.findByAssetId("asset-a")).thenReturn(Optional.of(assignA));
+        when(assetAssignmentRepository.findByAssetId("asset-b")).thenReturn(Optional.of(assignB));
+        when(assetAssignmentRepository.findByAssetId("asset-c")).thenReturn(Optional.empty());
+        when(assignmentBeneficiaryRepository.findByAssignmentId("assign-a"))
+                .thenReturn(List.of(new AssignmentBeneficiary("assign-a", "beneficiary-uuid-1")));
+        when(assignmentBeneficiaryRepository.findByAssignmentId("assign-b"))
+                .thenReturn(List.of(new AssignmentBeneficiary("assign-b", "beneficiary-uuid-2")));
+        when(handoverReceiptRepository.findByCaseId("case-uuid-1042")).thenReturn(Collections.emptyList());
+
+        HandoverDetailsResponse detailsForLinh = handoverExecutionService.getHandoverDetailsForBeneficiary(
+                "LV-1042", "user-linh", "linh.pham@beneficiary.com");
+        assertEquals(1, detailsForLinh.getAuthorizedAssets().size());
+        assertEquals("asset-a", detailsForLinh.getAuthorizedAssets().get(0).getAssetId());
+        assertEquals("IN PROGRESS", detailsForLinh.getHandoverStatus());
+
+        HandoverDetailsResponse detailsForChi = handoverExecutionService.getHandoverDetailsForBeneficiary(
+                "LV-1042", "user-chi", "chi@beneficiary.com");
+        assertTrue(detailsForChi.getAuthorizedAssets().isEmpty());
+    }
+
+    @Test
+    void testGetExecutorDashboard_CompletedCaseWithClearanceGrantedShowsCompleted() {
+        mockCase.setStatus("COMPLETED");
+        mockCase.setClearanceStatus("CLEARANCE_GRANTED");
+
+        when(userRepository.findById("executor-1")).thenReturn(Optional.empty());
+        when(handoverCaseRepository.findAll()).thenReturn(List.of(mockCase));
+        when(userRepository.findById("owner-uuid-1")).thenReturn(Optional.of(mockOwner));
+        when(contactRepository.findByOwnerId("owner-uuid-1")).thenReturn(List.of(mockBeneficiary));
+
+        ExecutorHandoverDashboardResponse dashboard = handoverExecutionService.getExecutorDashboard("executor-1");
+
+        assertEquals(1, dashboard.getMetrics().getCompletedReleases());
+        assertEquals(0, dashboard.getMetrics().getInProgress());
+        assertEquals("COMPLETED", dashboard.getCases().get(0).getHandoverStatus());
     }
 }
