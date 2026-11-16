@@ -4,6 +4,7 @@ import com.legacyvault.dto.ContactResponse;
 import com.legacyvault.dto.CreateContactRequest;
 import com.legacyvault.service.ContactService;
 import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -20,8 +21,18 @@ public class ContactController {
 
     private final ContactService contactService;
 
+    @Value("${app.frontend-url:http://localhost:5173}")
+    private String frontendBaseUrl;
+
     public ContactController(ContactService contactService) {
         this.contactService = contactService;
+    }
+
+    private String resolvedFrontendUrl() {
+        String base = (frontendBaseUrl != null && !frontendBaseUrl.isBlank())
+                ? frontendBaseUrl.trim()
+                : "http://localhost:5173";
+        return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
     }
 
     @PostMapping
@@ -72,13 +83,13 @@ public class ContactController {
                         </div>
                         <h1 style="margin:0 0 14px; font-size:24px;">%s</h1>
                         <p style="color:#cbd5e1; font-size:15px; line-height:1.6; margin-bottom:28px;">%s</p>
-                        <a href="http://localhost:5173" style="display:inline-block; background:#10b981; color:#052e16; font-weight:700; text-decoration:none; padding:12px 24px; border-radius:8px; font-size:14px;">
+                        <a href="%s" style="display:inline-block; background:#10b981; color:#052e16; font-weight:700; text-decoration:none; padding:12px 24px; border-radius:8px; font-size:14px;">
                           Mở trang chủ LegacyVault
                         </a>
                       </div>
                     </body>
                     </html>
-                    """.formatted(title, badgeColor, title, description);
+                    """.formatted(title, badgeColor, title, description, resolvedFrontendUrl());
             return ResponseEntity.ok(html);
         } catch (Exception e) {
             String errorHtml = """
@@ -96,13 +107,13 @@ public class ContactController {
                         </div>
                         <h1 style="margin:0 0 14px; font-size:24px;">Không thể xác nhận lời mời</h1>
                         <p style="color:#cbd5e1; font-size:15px; line-height:1.6; margin-bottom:28px;">%s</p>
-                        <a href="http://localhost:5173" style="display:inline-block; background:#374151; color:#f8fafc; font-weight:600; text-decoration:none; padding:12px 24px; border-radius:8px; font-size:14px;">
+                        <a href="%s" style="display:inline-block; background:#374151; color:#f8fafc; font-weight:600; text-decoration:none; padding:12px 24px; border-radius:8px; font-size:14px;">
                           Mở trang chủ LegacyVault
                         </a>
                       </div>
                     </body>
                     </html>
-                    """.formatted(e.getMessage());
+                    """.formatted(e.getMessage(), resolvedFrontendUrl());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorHtml);
         }
     }

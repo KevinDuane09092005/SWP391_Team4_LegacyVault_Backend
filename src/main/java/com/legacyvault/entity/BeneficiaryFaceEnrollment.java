@@ -4,11 +4,12 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import org.hibernate.annotations.GenericGenerator;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 
@@ -29,8 +30,8 @@ public class BeneficiaryFaceEnrollment {
             columnDefinition = "CHAR(36)")
     private String beneficiaryContactId;
 
-    @Lob
-    @Column(name = "encrypted_embedding", nullable = false, columnDefinition = "LONGBLOB")
+    @JdbcTypeCode(SqlTypes.LONG32VARBINARY)
+    @Column(name = "encrypted_embedding", nullable = false)
     private byte[] encryptedEmbedding;
 
     @Column(name = "embedding_version", nullable = false, length = 40)

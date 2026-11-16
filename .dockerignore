@@ -1,0 +1,17 @@
+target/
+uploads/
+face-verification-demo/
+starter/
+.git/
+.gitignore
+.idea/
+.vscode/
+.claude/
+.postman/
+.specsmd/
+memory-bank/
+postman/
+application-local.yml
+application-local.properties
+.env
+*.log
