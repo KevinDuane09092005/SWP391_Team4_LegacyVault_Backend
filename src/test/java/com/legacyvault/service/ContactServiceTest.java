@@ -6,6 +6,7 @@ import com.legacyvault.entity.Contact;
 import com.legacyvault.entity.DeadMansSwitch;
 import com.legacyvault.entity.User;
 import com.legacyvault.repository.AssetAssignmentRepository;
+import com.legacyvault.repository.AssignmentBeneficiaryRepository;
 import com.legacyvault.repository.ContactRepository;
 import com.legacyvault.repository.DeadMansSwitchRepository;
 import com.legacyvault.repository.UserRepository;
@@ -41,6 +42,9 @@ public class ContactServiceTest {
     @Mock
     private DeadMansSwitchRepository dmsRepository;
 
+    @Mock
+    private AssignmentBeneficiaryRepository assignmentBeneficiaryRepository;
+
     private ContactService contactService;
 
     private CreateContactRequest request;
@@ -52,7 +56,8 @@ public class ContactServiceTest {
                 userRepository,
                 emailService,
                 assetAssignmentRepository,
-                dmsRepository
+                dmsRepository,
+                assignmentBeneficiaryRepository
         );
         request = new CreateContactRequest(
                 "Tran Thi B",
@@ -321,5 +326,35 @@ public class ContactServiceTest {
         assertDoesNotThrow(() -> contactService.deleteContact("owner-123", "contact-uuid-1"));
 
         verify(contactRepository, times(1)).delete(contact);
+    }
+
+    @Test
+    void testUpdateAndDeleteContact_AssignedAsBeneficiary_ThrowsException() {
+        Contact contact = new Contact("owner-123", "Tran Thi B", "Spouse", "tranthib@email.com",
+                null, true, false, "verified");
+        contact.setContactId("contact-uuid-1");
+
+        when(dmsRepository.findByOwnerId("owner-123")).thenReturn(Optional.empty());
+        when(contactRepository.findByContactIdAndOwnerId("contact-uuid-1", "owner-123"))
+                .thenReturn(Optional.of(contact));
+        when(assetAssignmentRepository.existsByExecutorContactId("contact-uuid-1")).thenReturn(false);
+        when(assignmentBeneficiaryRepository.findByBeneficiaryContactId("contact-uuid-1"))
+                .thenReturn(List.of(new com.legacyvault.entity.AssignmentBeneficiary("assign-1", "contact-uuid-1")));
+
+        IllegalStateException updateEx = assertThrows(IllegalStateException.class, () ->
+                contactService.updateContact("owner-123", "contact-uuid-1", request)
+        );
+        assertTrue(updateEx.getMessage().contains("Người thụ hưởng"));
+
+        IllegalStateException revokeEx = assertThrows(IllegalStateException.class, () ->
+                contactService.revokeContactAccess("owner-123", "contact-uuid-1")
+        );
+        assertTrue(revokeEx.getMessage().contains("Người thụ hưởng"));
+
+        IllegalStateException deleteEx = assertThrows(IllegalStateException.class, () ->
+                contactService.deleteContact("owner-123", "contact-uuid-1")
+        );
+        assertTrue(deleteEx.getMessage().contains("Người thụ hưởng"));
+        verify(contactRepository, never()).delete(any());
     }
 }

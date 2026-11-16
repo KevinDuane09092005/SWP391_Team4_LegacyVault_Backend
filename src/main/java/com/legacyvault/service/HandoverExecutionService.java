@@ -5,6 +5,7 @@ import com.legacyvault.entity.*;
 import com.legacyvault.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,7 @@ public class HandoverExecutionService {
     private final BeneficiaryClaimSessionRepository claimSessionRepository;
     private final EmailService emailService;
     private final EncryptionService encryptionService;
+    private final HandoverReceiptRepository handoverReceiptRepository;
 
     public HandoverExecutionService(HandoverCaseRepository handoverCaseRepository,
             UserRepository userRepository,
@@ -42,6 +44,22 @@ public class HandoverExecutionService {
             BeneficiaryClaimSessionRepository claimSessionRepository,
             EmailService emailService,
             EncryptionService encryptionService) {
+        this(handoverCaseRepository, userRepository, contactRepository, assetRepository,
+                assetAssignmentRepository, assignmentBeneficiaryRepository, claimSessionRepository,
+                emailService, encryptionService, null);
+    }
+
+    @Autowired
+    public HandoverExecutionService(HandoverCaseRepository handoverCaseRepository,
+            UserRepository userRepository,
+            ContactRepository contactRepository,
+            AssetRepository assetRepository,
+            AssetAssignmentRepository assetAssignmentRepository,
+            AssignmentBeneficiaryRepository assignmentBeneficiaryRepository,
+            BeneficiaryClaimSessionRepository claimSessionRepository,
+            EmailService emailService,
+            EncryptionService encryptionService,
+            HandoverReceiptRepository handoverReceiptRepository) {
         this.handoverCaseRepository = handoverCaseRepository;
         this.userRepository = userRepository;
         this.contactRepository = contactRepository;
@@ -51,6 +69,7 @@ public class HandoverExecutionService {
         this.claimSessionRepository = claimSessionRepository;
         this.emailService = emailService;
         this.encryptionService = encryptionService;
+        this.handoverReceiptRepository = handoverReceiptRepository;
     }
 
     public static String sha256Hex(String input) {
@@ -154,16 +173,16 @@ public class HandoverExecutionService {
             String legalStatus;
             String handoverStatus;
 
-            if (rawStatus.equals("APPROVED")) {
+            if (rawStatus.contains("COMPLETED")) {
+                legalStatus = "APPROVED";
+                handoverStatus = "COMPLETED";
+            } else if (rawStatus.equals("APPROVED")) {
                 legalStatus = "APPROVED";
                 handoverStatus = "APPROVED";
             } else if (rawStatus.contains("PROGRESS") || rawStatus.contains("RELEASED")
                     || "CLEARANCE_GRANTED".equalsIgnoreCase(c.getClearanceStatus())) {
                 legalStatus = "APPROVED";
                 handoverStatus = "IN PROGRESS";
-            } else if (rawStatus.contains("COMPLETED")) {
-                legalStatus = "APPROVED";
-                handoverStatus = "COMPLETED";
             } else if (rawStatus.contains("REJECTED")) {
                 legalStatus = "REJECTED";
                 handoverStatus = "REJECTED";
@@ -314,6 +333,188 @@ public class HandoverExecutionService {
                 assetItems);
     }
 
+    /**
+     * Returns case details scoped strictly to the signed-in beneficiary:
+     * only assets explicitly assigned to this beneficiary are included, and progress reflects
+     * this beneficiary's own claim session and receipt rather than other co-beneficiaries.
+     */
+    @Transactional(readOnly = true)
+    public HandoverDetailsResponse getHandoverDetailsForBeneficiary(
+            String caseIdentifier, String viewerUserId, String beneficiaryEmail) {
+        HandoverCase c = findCaseByIdentifier(caseIdentifier);
+
+        User owner = userRepository.findById(c.getOwnerId()).orElse(null);
+        String ownerName = owner != null ? owner.getFullName() : "";
+        String ownerEmail = owner != null ? owner.getEmail() : "";
+
+        String targetEmail = (beneficiaryEmail != null && !beneficiaryEmail.isBlank())
+                ? beneficiaryEmail.trim()
+                : (viewerUserId != null && !viewerUserId.isBlank()
+                        ? userRepository.findById(viewerUserId).map(User::getEmail).orElse(null)
+                        : null);
+
+        List<Contact> allOwnerBeneficiaries = findBeneficiaryContacts(c.getOwnerId());
+        List<Contact> matchedContacts = allOwnerBeneficiaries.stream()
+                .filter(contact -> (viewerUserId != null && viewerUserId.equals(contact.getContactId()))
+                        || (targetEmail != null && !targetEmail.isBlank()
+                                && contact.getEmail() != null
+                                && contact.getEmail().trim().equalsIgnoreCase(targetEmail.trim())))
+                .collect(Collectors.toList());
+
+        Set<String> matchedContactIds = matchedContacts.stream()
+                .map(Contact::getContactId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        String displayName = !matchedContacts.isEmpty() ? matchedContacts.get(0).getFullName() : "";
+        String displayEmail = !matchedContacts.isEmpty()
+                ? matchedContacts.get(0).getEmail()
+                : (targetEmail != null ? targetEmail : "");
+
+        String rawStatus = c.getStatus() != null ? c.getStatus().toUpperCase(Locale.ROOT) : "INITIATED";
+        String detailLegalStatus = "PENDING";
+        if (rawStatus.equals("APPROVED") || rawStatus.contains("PROGRESS") || rawStatus.contains("RELEASED")
+                || rawStatus.contains("COMPLETED")) {
+            detailLegalStatus = "APPROVED";
+        } else if (rawStatus.contains("SUBMITTED") || rawStatus.contains("UNDER_REVIEW")) {
+            detailLegalStatus = "UNDER_REVIEW";
+        } else if (rawStatus.contains("REJECTED")) {
+            detailLegalStatus = "REJECTED";
+        }
+
+        String effectiveCaseStatus = resolveBeneficiaryEffectiveStatus(c, rawStatus, matchedContactIds);
+
+        List<HandoverDetailsResponse.HandoverAssetItem> assetItems = new ArrayList<>();
+        if (!matchedContactIds.isEmpty()) {
+            List<Asset> ownerAssets = assetRepository.findByOwnerId(c.getOwnerId());
+            if (ownerAssets != null) {
+                boolean isAuthorized = "RELEASED".equalsIgnoreCase(effectiveCaseStatus)
+                        || "COMPLETED".equalsIgnoreCase(effectiveCaseStatus);
+                for (Asset a : ownerAssets) {
+                    if (!isAssetAssignedToBeneficiaries(a.getAssetId(), matchedContactIds)) {
+                        continue;
+                    }
+                    String decrypted = null;
+                    if (isAuthorized && a.getEncryptedCredentials() != null && !a.getEncryptedCredentials().isEmpty()) {
+                        try {
+                            decrypted = encryptionService.decrypt(a.getEncryptedCredentials());
+                        } catch (Exception e) {
+                            logger.warn("Could not decrypt asset credentials {}: {}", a.getAssetId(), e.getMessage());
+                        }
+                    }
+                    assetItems.add(new HandoverDetailsResponse.HandoverAssetItem(
+                            a.getAssetId(),
+                            a.getAssetName(),
+                            a.getAssetType() != null ? a.getAssetType() : "General Asset",
+                            a.getDescription(),
+                            decrypted,
+                            a.getAttachmentUrl(),
+                            "Legal Verification",
+                            isAuthorized ? "AUTHORIZED" : "AUTHORIZED & LOCKED"));
+                }
+            }
+        }
+
+        HandoverDetailsResponse response = new HandoverDetailsResponse(
+                c.getCaseNumber(),
+                effectiveCaseStatus,
+                new HandoverDetailsResponse.VaultOwnerSummary(ownerName, ownerEmail, "DECEASED/INACTIVE"),
+                new HandoverDetailsResponse.BeneficiarySummary(displayName, displayEmail),
+                new HandoverDetailsResponse.LegalVerificationSummary(
+                        detailLegalStatus,
+                        c.getLegalVerificationSummary() != null ? c.getLegalVerificationSummary()
+                                : (detailLegalStatus.equals("APPROVED") ? "Certified Court Order Verified"
+                                        : "Pending Legal Verification")),
+                assetItems);
+        if (c.getTriggeredAt() != null) {
+            response.setCreatedAt(c.getTriggeredAt().toString());
+        }
+        if ("COMPLETED".equalsIgnoreCase(effectiveCaseStatus)) {
+            LocalDateTime confirmedAt = resolveBeneficiaryConfirmedAt(c, matchedContactIds);
+            if (confirmedAt != null) {
+                response.setCompletedAt(confirmedAt.toString());
+            }
+        }
+        return response;
+    }
+
+    private LocalDateTime resolveBeneficiaryConfirmedAt(HandoverCase c, Set<String> matchedContactIds) {
+        if (handoverReceiptRepository != null && c.getCaseId() != null
+                && matchedContactIds != null && !matchedContactIds.isEmpty()) {
+            List<HandoverReceipt> receipts = handoverReceiptRepository.findByCaseId(c.getCaseId());
+            if (receipts != null && !receipts.isEmpty()) {
+                Optional<LocalDateTime> matchedConfirmedAt = receipts.stream()
+                        .filter(r -> matchedContactIds.contains(r.getBeneficiaryContactId())
+                                && r.getConfirmedAt() != null)
+                        .map(HandoverReceipt::getConfirmedAt)
+                        .max(LocalDateTime::compareTo);
+                if (matchedConfirmedAt.isPresent()) {
+                    return matchedConfirmedAt.get();
+                }
+            }
+        }
+        return c.getResolvedAt();
+    }
+
+    private boolean isAssetAssignedToBeneficiaries(String assetId, Set<String> beneficiaryContactIds) {
+        if (assetId == null || beneficiaryContactIds == null || beneficiaryContactIds.isEmpty()
+                || assetAssignmentRepository == null || assignmentBeneficiaryRepository == null) {
+            return false;
+        }
+        Optional<AssetAssignment> optAssignment = assetAssignmentRepository.findByAssetId(assetId);
+        if (optAssignment.isEmpty()) {
+            return false;
+        }
+        List<AssignmentBeneficiary> links = assignmentBeneficiaryRepository
+                .findByAssignmentId(optAssignment.get().getAssignmentId());
+        return links != null && links.stream()
+                .anyMatch(link -> beneficiaryContactIds.contains(link.getBeneficiaryContactId()));
+    }
+
+    private String resolveBeneficiaryEffectiveStatus(
+            HandoverCase c, String rawStatus, Set<String> matchedContactIds) {
+        boolean isPreRelease = rawStatus.equals("PENDING")
+                || rawStatus.equals("INITIATED")
+                || rawStatus.contains("SUBMITTED")
+                || rawStatus.contains("UNDER_REVIEW")
+                || rawStatus.contains("REJECTED")
+                || rawStatus.equals("APPROVED");
+        if (isPreRelease) {
+            return rawStatus;
+        }
+
+        if (matchedContactIds != null && !matchedContactIds.isEmpty()) {
+            if (handoverReceiptRepository != null && c.getCaseId() != null) {
+                List<HandoverReceipt> receipts = handoverReceiptRepository.findByCaseId(c.getCaseId());
+                boolean confirmedByThisBeneficiary = receipts != null && receipts.stream()
+                        .anyMatch(r -> matchedContactIds.contains(r.getBeneficiaryContactId()));
+                if (confirmedByThisBeneficiary) {
+                    return "COMPLETED";
+                }
+            }
+
+            if (claimSessionRepository != null && c.getCaseId() != null) {
+                List<BeneficiaryClaimSession> sessions = claimSessionRepository.findByCaseId(c.getCaseId());
+                if (sessions != null) {
+                    Optional<BeneficiaryClaimSession> mySession = sessions.stream()
+                            .filter(s -> "ACTIVE".equalsIgnoreCase(s.getTokenStatus())
+                                    && matchedContactIds.contains(s.getBeneficiaryContactId()))
+                            .findFirst();
+                    if (mySession.isPresent() && Boolean.TRUE.equals(mySession.get().getIdentityVerified())) {
+                        BeneficiaryClaimSession s = mySession.get();
+                        if ("VERIFIED".equalsIgnoreCase(s.getKycFacialStatus())
+                                && ("RELEASED".equals(rawStatus) || "COMPLETED".equals(rawStatus))) {
+                            return "RELEASED";
+                        }
+                        return "IDENTITY_VERIFIED";
+                    }
+                }
+            }
+        }
+
+        return "IN PROGRESS";
+    }
+
     @Transactional
     public StartReleaseResponse startHandoverRelease(String caseIdentifier, String executorUserId) {
         HandoverCase c = findCaseByIdentifier(caseIdentifier);
@@ -441,11 +642,14 @@ public class HandoverExecutionService {
     @Transactional
     public Map<String, String> dispatchSecureHandover(String caseIdentifier, String executorUserId) {
         HandoverCase c = findCaseByIdentifier(caseIdentifier);
-        c.setStatus("RELEASED");
-        handoverCaseRepository.save(c);
+        if (!"COMPLETED".equalsIgnoreCase(c.getStatus())) {
+            c.setStatus("RELEASED");
+            handoverCaseRepository.save(c);
+        }
 
-        logger.info("Dispatched secure handover for caseNumber={}", c.getCaseNumber());
-        return Map.of("case_number", c.getCaseNumber(), "status", "RELEASED");
+        String effectiveStatus = c.getStatus() != null ? c.getStatus() : "RELEASED";
+        logger.info("Dispatched secure handover for caseNumber={} status={}", c.getCaseNumber(), effectiveStatus);
+        return Map.of("case_number", c.getCaseNumber(), "status", effectiveStatus);
     }
 
     @Transactional(readOnly = true)

@@ -7,9 +7,14 @@ import com.legacyvault.dto.BeneficiaryFaceVerificationRequest;
 import com.legacyvault.dto.BeneficiaryFaceVerificationResponse;
 import com.legacyvault.entity.BeneficiaryClaimSession;
 import com.legacyvault.entity.BeneficiaryFaceEnrollment;
+import com.legacyvault.entity.Contact;
+import com.legacyvault.entity.HandoverCase;
+import com.legacyvault.entity.User;
 import com.legacyvault.repository.BeneficiaryClaimSessionRepository;
 import com.legacyvault.repository.BeneficiaryFaceEnrollmentRepository;
+import com.legacyvault.repository.ContactRepository;
 import com.legacyvault.repository.HandoverCaseRepository;
+import com.legacyvault.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -19,8 +24,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -50,6 +57,12 @@ public class BeneficiaryFaceVerificationService {
     private final double antiSpoofThreshold;
     private final ConcurrentMap<UUID, FaceCheckSession> sessions = new ConcurrentHashMap<>();
 
+    @Autowired(required = false)
+    private UserRepository userRepository;
+
+    @Autowired(required = false)
+    private ContactRepository contactRepository;
+
     @Autowired
     public BeneficiaryFaceVerificationService(
             BeneficiaryFaceEnrollmentRepository enrollmentRepository,
@@ -75,13 +88,19 @@ public class BeneficiaryFaceVerificationService {
                 DEFAULT_LIVENESS_THRESHOLD, DEFAULT_ANTI_SPOOF_THRESHOLD);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public BeneficiaryFaceEnrollmentStatusResponse getEnrollmentStatus(String beneficiaryContactId) {
-        BeneficiaryClaimSession claim = requireLatestActiveClaim(beneficiaryContactId);
+        return getEnrollmentStatus(beneficiaryContactId, null);
+    }
+
+    @Transactional
+    public BeneficiaryFaceEnrollmentStatusResponse getEnrollmentStatus(
+            String beneficiaryContactId, String caseReference) {
+        BeneficiaryClaimSession claim = resolveClaimForEnrollment(caseReference, beneficiaryContactId);
         String resolvedContactId = claim.getBeneficiaryContactId() != null
                 ? claim.getBeneficiaryContactId()
                 : beneficiaryContactId;
-        return enrollmentRepository.findByBeneficiaryContactId(resolvedContactId)
+        return findOrSyncEnrollmentProfile(resolvedContactId, beneficiaryContactId)
                 .map(profile -> new BeneficiaryFaceEnrollmentStatusResponse(true, profile.getConsentedAt()))
                 .orElseGet(() -> new BeneficiaryFaceEnrollmentStatusResponse(false, null));
     }
@@ -89,7 +108,13 @@ public class BeneficiaryFaceVerificationService {
     @Transactional
     public BeneficiaryFaceEnrollmentStatusResponse enroll(
             String beneficiaryContactId, BeneficiaryFaceEnrollmentRequest request) {
-        BeneficiaryClaimSession claim = requireLatestActiveClaim(beneficiaryContactId);
+        return enroll(beneficiaryContactId, request, null);
+    }
+
+    @Transactional
+    public BeneficiaryFaceEnrollmentStatusResponse enroll(
+            String beneficiaryContactId, BeneficiaryFaceEnrollmentRequest request, String caseReference) {
+        BeneficiaryClaimSession claim = resolveClaimForEnrollment(caseReference, beneficiaryContactId);
         String resolvedContactId = claim.getBeneficiaryContactId() != null
                 ? claim.getBeneficiaryContactId()
                 : beneficiaryContactId;
@@ -116,7 +141,12 @@ public class BeneficiaryFaceVerificationService {
 
     @Transactional
     public void deleteEnrollment(String beneficiaryContactId) {
-        BeneficiaryClaimSession claim = requireLatestActiveClaim(beneficiaryContactId);
+        deleteEnrollment(beneficiaryContactId, null);
+    }
+
+    @Transactional
+    public void deleteEnrollment(String beneficiaryContactId, String caseReference) {
+        BeneficiaryClaimSession claim = resolveClaimForEnrollment(caseReference, beneficiaryContactId);
         String resolvedContactId = claim.getBeneficiaryContactId() != null
                 ? claim.getBeneficiaryContactId()
                 : beneficiaryContactId;
@@ -131,7 +161,7 @@ public class BeneficiaryFaceVerificationService {
         String resolvedContactId = claim.getBeneficiaryContactId() != null
                 ? claim.getBeneficiaryContactId()
                 : beneficiaryContactId;
-        enrollmentRepository.findByBeneficiaryContactId(resolvedContactId)
+        findOrSyncEnrollmentProfile(resolvedContactId, beneficiaryContactId)
                 .filter(profile -> profile.getEncryptedEmbedding() != null)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
                         "Enroll a face reference before starting the access check"));
@@ -186,8 +216,7 @@ public class BeneficiaryFaceVerificationService {
         }
 
         double[] liveEmbedding = validateAndConvertEmbedding(request.embedding());
-        BeneficiaryFaceEnrollment profile = enrollmentRepository
-                .findByBeneficiaryContactId(resolvedContactId)
+        BeneficiaryFaceEnrollment profile = findOrSyncEnrollmentProfile(resolvedContactId, beneficiaryContactId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
                         "No enrolled face reference is available"));
         if (!EMBEDDING_VERSION.equals(profile.getEmbeddingVersion())) {
@@ -227,40 +256,123 @@ public class BeneficiaryFaceVerificationService {
                 true);
     }
 
-    private BeneficiaryClaimSession requireLatestActiveClaim(String beneficiaryContactId) {
-        return claimSessionRepository
-                .findTopByBeneficiaryContactIdAndTokenStatusAndIdentityVerifiedTrueOrderByCreatedAtDesc(
-                        beneficiaryContactId, ACTIVE)
-                .or(() -> {
-                    List<BeneficiaryClaimSession> all = claimSessionRepository.findAll();
-                    if (all == null || all.isEmpty()) {
-                        return Optional.empty();
+    private BeneficiaryClaimSession resolveClaimForEnrollment(String caseReference, String beneficiaryContactId) {
+        if (caseReference != null && !caseReference.isBlank()) {
+            return requireActiveClaim(caseReference, beneficiaryContactId);
+        }
+        return requireLatestActiveClaim(beneficiaryContactId);
+    }
+
+    private Optional<BeneficiaryFaceEnrollment> findOrSyncEnrollmentProfile(
+            String resolvedContactId, String principalId) {
+        Optional<BeneficiaryFaceEnrollment> direct = enrollmentRepository
+                .findByBeneficiaryContactId(resolvedContactId)
+                .filter(profile -> profile.getEncryptedEmbedding() != null);
+        if (direct.isPresent()) {
+            return direct;
+        }
+
+        String email = null;
+        if (contactRepository != null && resolvedContactId != null && !resolvedContactId.isBlank()) {
+            email = contactRepository.findById(resolvedContactId)
+                    .map(Contact::getEmail)
+                    .filter(e -> e != null && !e.isBlank())
+                    .orElse(null);
+        }
+        if ((email == null || email.isBlank()) && userRepository != null
+                && principalId != null && !principalId.isBlank()) {
+            email = userRepository.findById(principalId)
+                    .map(User::getEmail)
+                    .filter(e -> e != null && !e.isBlank())
+                    .orElse(null);
+        }
+
+        Set<String> candidateIds = new LinkedHashSet<>();
+        if (email != null && !email.isBlank() && contactRepository != null) {
+            String trimmedEmail = email.trim();
+            List<Contact> byExactEmail = contactRepository.findByEmail(trimmedEmail);
+            if (byExactEmail != null) {
+                for (Contact c : byExactEmail) {
+                    if (c.getContactId() != null && !c.getContactId().isBlank()) {
+                        candidateIds.add(c.getContactId());
                     }
-                    return all.stream()
-                            .filter(c -> ACTIVE.equalsIgnoreCase(c.getTokenStatus())
-                                    && Boolean.TRUE.equals(c.getIdentityVerified()))
-                            .findFirst();
-                })
+                }
+            }
+            List<Contact> byIgnoreCaseVerified = contactRepository
+                    .findByEmailIgnoreCaseAndStatus(trimmedEmail, "verified");
+            if (byIgnoreCaseVerified != null) {
+                for (Contact c : byIgnoreCaseVerified) {
+                    if (c.getContactId() != null && !c.getContactId().isBlank()) {
+                        candidateIds.add(c.getContactId());
+                    }
+                }
+            }
+        }
+        if (principalId != null && !principalId.isBlank()) {
+            candidateIds.add(principalId);
+        }
+        candidateIds.remove(resolvedContactId);
+
+        for (String candidateId : candidateIds) {
+            Optional<BeneficiaryFaceEnrollment> existingOpt = enrollmentRepository
+                    .findByBeneficiaryContactId(candidateId)
+                    .filter(p -> p.getEncryptedEmbedding() != null
+                            && EMBEDDING_VERSION.equals(p.getEmbeddingVersion()));
+            if (existingOpt.isPresent()) {
+                BeneficiaryFaceEnrollment existing = existingOpt.get();
+                LocalDateTime consentedAt = existing.getConsentedAt() != null
+                        ? existing.getConsentedAt()
+                        : LocalDateTime.now();
+                BeneficiaryFaceEnrollment synced = new BeneficiaryFaceEnrollment(
+                        resolvedContactId,
+                        existing.getEncryptedEmbedding(),
+                        existing.getEmbeddingVersion(),
+                        consentedAt);
+                enrollmentRepository.save(synced);
+                return Optional.of(synced);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private BeneficiaryClaimSession requireLatestActiveClaim(String beneficiaryContactId) {
+        String resolvedContactId = resolveBeneficiaryContactId(null, beneficiaryContactId);
+        boolean strictBeneficiary = resolvedContactId != null && !resolvedContactId.equals(beneficiaryContactId);
+        Optional<BeneficiaryClaimSession> direct = claimSessionRepository
+                .findTopByBeneficiaryContactIdAndTokenStatusAndIdentityVerifiedTrueOrderByCreatedAtDesc(
+                        resolvedContactId, ACTIVE);
+        if (direct.isEmpty() && !strictBeneficiary) {
+            List<BeneficiaryClaimSession> all = claimSessionRepository.findAll();
+            if (all != null && !all.isEmpty()) {
+                direct = all.stream()
+                        .filter(c -> ACTIVE.equalsIgnoreCase(c.getTokenStatus())
+                                && Boolean.TRUE.equals(c.getIdentityVerified()))
+                        .findFirst();
+            }
+        }
+        return direct
                 .filter(claim -> ACTIVE.equalsIgnoreCase(claim.getTokenStatus()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
                         "Verify the beneficiary one-time code before face enrollment"));
     }
 
     private BeneficiaryClaimSession requireActiveClaim(String caseReference, String beneficiaryContactId) {
+        String resolvedContactId = resolveBeneficiaryContactId(caseReference, beneficiaryContactId);
+        boolean strictBeneficiary = resolvedContactId != null && !resolvedContactId.equals(beneficiaryContactId);
         Optional<BeneficiaryClaimSession> claim = claimSessionRepository
-                .findByCaseIdAndBeneficiaryContactId(caseReference, beneficiaryContactId);
+                .findByCaseIdAndBeneficiaryContactId(caseReference, resolvedContactId);
         if (claim.isEmpty()) {
             claim = handoverCaseRepository.findByCaseNumber(caseReference)
                     .flatMap(handoverCase -> {
                         Optional<BeneficiaryClaimSession> byContact = claimSessionRepository
-                                .findByCaseIdAndBeneficiaryContactId(handoverCase.getCaseId(), beneficiaryContactId);
-                        if (byContact.isPresent()) {
+                                .findByCaseIdAndBeneficiaryContactId(handoverCase.getCaseId(), resolvedContactId);
+                        if (byContact.isPresent() || strictBeneficiary) {
                             return byContact;
                         }
                         return findFallbackActiveClaimByCaseId(handoverCase.getCaseId());
                     });
         }
-        if (claim.isEmpty()) {
+        if (claim.isEmpty() && !strictBeneficiary) {
             claim = findFallbackActiveClaimByCaseId(caseReference);
         }
         return claim
@@ -268,6 +380,51 @@ public class BeneficiaryFaceVerificationService {
                 .filter(item -> ACTIVE.equalsIgnoreCase(item.getTokenStatus()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
                         "Complete beneficiary sign-in and one-time-code verification for this case first"));
+    }
+
+    private String resolveBeneficiaryContactId(String caseReference, String principalId) {
+        if (principalId == null || principalId.isBlank()
+                || userRepository == null || contactRepository == null) {
+            return principalId;
+        }
+        Optional<User> optUser = userRepository.findById(principalId);
+        if (optUser.isEmpty() || optUser.get().getEmail() == null || optUser.get().getEmail().isBlank()) {
+            return principalId;
+        }
+        String userEmail = optUser.get().getEmail().trim();
+        if (caseReference != null && !caseReference.isBlank()) {
+            HandoverCase handoverCase = handoverCaseRepository.findByCaseNumber(caseReference)
+                    .or(() -> handoverCaseRepository.findById(caseReference))
+                    .orElse(null);
+            if (handoverCase != null && handoverCase.getOwnerId() != null) {
+                List<Contact> ownerContacts = contactRepository.findByOwnerId(handoverCase.getOwnerId());
+                if (ownerContacts != null) {
+                    Optional<String> matched = ownerContacts.stream()
+                            .filter(c -> Boolean.TRUE.equals(c.getIsBeneficiary())
+                                    && c.getEmail() != null
+                                    && c.getEmail().trim().equalsIgnoreCase(userEmail))
+                            .sorted((a, b) -> Boolean.compare(
+                                    "verified".equalsIgnoreCase(b.getStatus()),
+                                    "verified".equalsIgnoreCase(a.getStatus())))
+                            .map(Contact::getContactId)
+                            .findFirst();
+                    if (matched.isPresent()) {
+                        return matched.get();
+                    }
+                }
+            }
+        }
+        List<Contact> byEmail = contactRepository.findByEmail(userEmail);
+        if (byEmail != null) {
+            Optional<String> matched = byEmail.stream()
+                    .filter(c -> Boolean.TRUE.equals(c.getIsBeneficiary()))
+                    .map(Contact::getContactId)
+                    .findFirst();
+            if (matched.isPresent()) {
+                return matched.get();
+            }
+        }
+        return principalId;
     }
 
     private Optional<BeneficiaryClaimSession> findFallbackActiveClaimByCaseId(String caseId) {

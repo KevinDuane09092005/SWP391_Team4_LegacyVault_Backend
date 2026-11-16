@@ -41,9 +41,20 @@ public class AssetHandoverController {
     }
 
     @GetMapping("/cases/{caseId}/details")
-    public ResponseEntity<?> getHandoverDetails(@PathVariable String caseId) {
+    public ResponseEntity<?> getHandoverDetails(
+            @PathVariable String caseId,
+            @RequestParam(name = "for_beneficiary", required = false) Boolean forBeneficiary,
+            @RequestParam(name = "beneficiary_email", required = false) String beneficiaryEmail,
+            Authentication authentication) {
         try {
-            HandoverDetailsResponse response = handoverExecutionService.getHandoverDetails(caseId);
+            HandoverDetailsResponse response;
+            if (Boolean.TRUE.equals(forBeneficiary) || (beneficiaryEmail != null && !beneficiaryEmail.isBlank())) {
+                String viewerId = authentication != null ? authentication.getName() : null;
+                response = handoverExecutionService.getHandoverDetailsForBeneficiary(
+                        caseId, viewerId, beneficiaryEmail);
+            } else {
+                response = handoverExecutionService.getHandoverDetails(caseId);
+            }
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

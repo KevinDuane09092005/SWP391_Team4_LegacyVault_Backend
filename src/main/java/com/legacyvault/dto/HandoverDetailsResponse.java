@@ -23,6 +23,12 @@ public class HandoverDetailsResponse {
     @JsonProperty("authorized_assets")
     private List<HandoverAssetItem> authorizedAssets;
 
+    @JsonProperty("created_at")
+    private String createdAt;
+
+    @JsonProperty("completed_at")
+    private String completedAt;
+
     public HandoverDetailsResponse() {}
 
     public HandoverDetailsResponse(String caseNumber, String handoverStatus, VaultOwnerSummary vaultOwner,
@@ -82,6 +88,22 @@ public class HandoverDetailsResponse {
 
     public void setAuthorizedAssets(List<HandoverAssetItem> authorizedAssets) {
         this.authorizedAssets = authorizedAssets;
+    }
+
+    public String getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(String createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public String getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(String completedAt) {
+        this.completedAt = completedAt;
     }
 
     public static class VaultOwnerSummary {

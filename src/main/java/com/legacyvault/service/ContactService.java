@@ -6,6 +6,7 @@ import com.legacyvault.entity.Contact;
 import com.legacyvault.entity.DeadMansSwitch;
 import com.legacyvault.entity.User;
 import com.legacyvault.repository.AssetAssignmentRepository;
+import com.legacyvault.repository.AssignmentBeneficiaryRepository;
 import com.legacyvault.repository.ContactRepository;
 import com.legacyvault.repository.DeadMansSwitchRepository;
 import com.legacyvault.repository.UserRepository;
@@ -25,9 +26,18 @@ public class ContactService {
     private final EmailService emailService;
     private final AssetAssignmentRepository assetAssignmentRepository;
     private final DeadMansSwitchRepository deadMansSwitchRepository;
+    private final AssignmentBeneficiaryRepository assignmentBeneficiaryRepository;
 
     public ContactService(ContactRepository contactRepository, UserRepository userRepository, EmailService emailService) {
-        this(contactRepository, userRepository, emailService, null, null);
+        this(contactRepository, userRepository, emailService, null, null, null);
+    }
+
+    public ContactService(ContactRepository contactRepository,
+                          UserRepository userRepository,
+                          EmailService emailService,
+                          AssetAssignmentRepository assetAssignmentRepository,
+                          DeadMansSwitchRepository deadMansSwitchRepository) {
+        this(contactRepository, userRepository, emailService, assetAssignmentRepository, deadMansSwitchRepository, null);
     }
 
     @Autowired
@@ -35,12 +45,14 @@ public class ContactService {
                           UserRepository userRepository,
                           EmailService emailService,
                           AssetAssignmentRepository assetAssignmentRepository,
-                          DeadMansSwitchRepository deadMansSwitchRepository) {
+                          DeadMansSwitchRepository deadMansSwitchRepository,
+                          AssignmentBeneficiaryRepository assignmentBeneficiaryRepository) {
         this.contactRepository = contactRepository;
         this.userRepository = userRepository;
         this.emailService = emailService;
         this.assetAssignmentRepository = assetAssignmentRepository;
         this.deadMansSwitchRepository = deadMansSwitchRepository;
+        this.assignmentBeneficiaryRepository = assignmentBeneficiaryRepository;
     }
 
     @Transactional
@@ -193,6 +205,7 @@ public class ContactService {
 
         Contact contact = contactRepository.findByContactIdAndOwnerId(contactId.trim(), ownerId.trim())
                 .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
+        ensureContactNotAssigned(contact);
 
         if (request.getFullName() != null && !request.getFullName().isBlank()) {
             contact.setFullName(request.getFullName().trim());
@@ -229,6 +242,7 @@ public class ContactService {
 
         Contact contact = contactRepository.findByContactIdAndOwnerId(contactId.trim(), ownerId.trim())
                 .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
+        ensureContactNotAssigned(contact);
 
         if ("verified".equalsIgnoreCase(contact.getStatus())) {
             throw new IllegalStateException("Liên hệ này đã xác nhận lời mời (verified), không cần gửi lại.");
@@ -260,6 +274,7 @@ public class ContactService {
 
         Contact contact = contactRepository.findByContactIdAndOwnerId(contactId.trim(), ownerId.trim())
                 .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
+        ensureContactNotAssigned(contact);
 
         if (!"pending".equalsIgnoreCase(contact.getStatus())) {
             throw new IllegalStateException("Chỉ có thể thu hồi lời mời liên hệ đang ở trạng thái chờ (pending).");
@@ -277,6 +292,7 @@ public class ContactService {
 
         Contact contact = contactRepository.findByContactIdAndOwnerId(contactId.trim(), ownerId.trim())
                 .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
+        ensureContactNotAssigned(contact);
 
         if ("revoked".equalsIgnoreCase(contact.getStatus())) {
             throw new IllegalStateException("Quyền truy cập của người liên hệ này đã bị thu hồi trước đó.");
@@ -294,14 +310,27 @@ public class ContactService {
 
         Contact contact = contactRepository.findByContactIdAndOwnerId(contactId.trim(), ownerId.trim())
                 .orElseThrow(() -> new RuntimeException("Contact not found or access denied"));
-
-        if (assetAssignmentRepository != null && assetAssignmentRepository.existsByExecutorContactId(contact.getContactId())) {
-            throw new IllegalStateException(
-                    "Không thể xóa người liên hệ này vì đang được chỉ định làm Người thực thi (Executor) cho tài sản. Vui lòng thay đổi Người thực thi của tài sản trước."
-            );
-        }
+        ensureContactNotAssigned(contact);
 
         contactRepository.delete(contact);
+    }
+
+    private void ensureContactNotAssigned(Contact contact) {
+        if (contact == null || contact.getContactId() == null) {
+            return;
+        }
+        if (assetAssignmentRepository != null
+                && assetAssignmentRepository.existsByExecutorContactId(contact.getContactId())) {
+            throw new IllegalStateException(
+                    "Không thể thao tác với người liên hệ này vì đang được chỉ định làm Người thực thi (Executor) cho tài sản. Vui lòng xóa Assignment liên quan trước."
+            );
+        }
+        if (assignmentBeneficiaryRepository != null
+                && !assignmentBeneficiaryRepository.findByBeneficiaryContactId(contact.getContactId()).isEmpty()) {
+            throw new IllegalStateException(
+                    "Không thể thao tác với người liên hệ này vì đang được chỉ định làm Người thụ hưởng (Beneficiary) cho tài sản. Vui lòng xóa Assignment liên quan trước."
+            );
+        }
     }
 
     private void validateOwnerAndContactId(String ownerId, String contactId) {

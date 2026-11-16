@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -30,20 +31,25 @@ public class BeneficiaryFaceVerificationController {
     }
 
     @GetMapping("/enrollment")
-    public BeneficiaryFaceEnrollmentStatusResponse enrollmentStatus(Authentication authentication) {
-        return service.getEnrollmentStatus(beneficiaryId(authentication));
+    public BeneficiaryFaceEnrollmentStatusResponse enrollmentStatus(
+            @RequestParam(name = "case_ref", required = false) String caseRef,
+            Authentication authentication) {
+        return service.getEnrollmentStatus(beneficiaryId(authentication), caseRef);
     }
 
     @PutMapping("/enrollment")
     public BeneficiaryFaceEnrollmentStatusResponse enroll(
+            @RequestParam(name = "case_ref", required = false) String caseRef,
             @Valid @RequestBody BeneficiaryFaceEnrollmentRequest request,
             Authentication authentication) {
-        return service.enroll(beneficiaryId(authentication), request);
+        return service.enroll(beneficiaryId(authentication), request, caseRef);
     }
 
     @DeleteMapping("/enrollment")
-    public ResponseEntity<Void> deleteEnrollment(Authentication authentication) {
-        service.deleteEnrollment(beneficiaryId(authentication));
+    public ResponseEntity<Void> deleteEnrollment(
+            @RequestParam(name = "case_ref", required = false) String caseRef,
+            Authentication authentication) {
+        service.deleteEnrollment(beneficiaryId(authentication), caseRef);
         return ResponseEntity.noContent().build();
     }
 
