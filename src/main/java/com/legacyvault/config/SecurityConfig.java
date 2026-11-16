@@ -27,7 +27,7 @@ public class SecurityConfig {
         private final JwtAuthenticationFilter jwtAuthFilter;
         private final ChatbotAuthenticationEntryPoint chatbotAuthenticationEntryPoint;
 
-        @Value("${app.cors.allowed-origins:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://legacyvault-backend-ue8r.onrender.com}")
+        @Value("${app.cors.allowed-origins:http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://legacyvault-backend-ue8r.onrender.com,https://legacyvault-chi-lovat.vercel.app}")
         private String allowedOrigins;
 
         public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter,
