@@ -80,8 +80,7 @@ public class SecurityConfig {
                                                 .permitAll()
                                                 .requestMatchers("/api/v1/handover/beneficiary/face/**")
                                                 .hasAnyRole("BENEFICIARY", "VAULT_OWNER", "USER")
-                                                .requestMatchers(HttpMethod.GET, "/api/v1/plans",
-                                                                "/api/v1/assets/documents/**")
+                                                .requestMatchers(HttpMethod.GET, "/api/v1/plans")
                                                 .permitAll()
                                                 .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SYSTEM_ADMIN")
                                                 .anyRequest().authenticated())

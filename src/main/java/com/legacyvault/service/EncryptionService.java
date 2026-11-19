@@ -79,4 +79,54 @@ public class EncryptionService {
             throw new RuntimeException("Decryption failed", e);
         }
     }
+
+    public byte[] encryptBytes(byte[] plainBytes) {
+        if (plainBytes == null || plainBytes.length == 0) {
+            return plainBytes;
+        }
+        try {
+            byte[] iv = new byte[IV_SIZE];
+            SecureRandom random = new SecureRandom();
+            random.nextBytes(iv);
+            IvParameterSpec ivSpec = new IvParameterSpec(iv);
+
+            SecretKeySpec secretKey = new SecretKeySpec(this.keyBytes, "AES");
+            Cipher cipher = Cipher.getInstance(ALGORITHM);
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivSpec);
+
+            byte[] encrypted = cipher.doFinal(plainBytes);
+
+            byte[] combined = new byte[iv.length + encrypted.length];
+            System.arraycopy(iv, 0, combined, 0, iv.length);
+            System.arraycopy(encrypted, 0, combined, iv.length, encrypted.length);
+
+            return combined;
+        } catch (Exception e) {
+            throw new RuntimeException("Byte encryption failed", e);
+        }
+    }
+
+    public byte[] decryptBytes(byte[] cipherBytes) {
+        if (cipherBytes == null || cipherBytes.length == 0) {
+            return cipherBytes;
+        }
+        try {
+            if (cipherBytes.length <= IV_SIZE) {
+                throw new IllegalArgumentException("Invalid encrypted data length");
+            }
+
+            byte[] iv = Arrays.copyOfRange(cipherBytes, 0, IV_SIZE);
+            byte[] encryptedPayload = Arrays.copyOfRange(cipherBytes, IV_SIZE, cipherBytes.length);
+
+            IvParameterSpec ivSpec = new IvParameterSpec(iv);
+            SecretKeySpec secretKey = new SecretKeySpec(this.keyBytes, "AES");
+
+            Cipher cipher = Cipher.getInstance(ALGORITHM);
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec);
+
+            return cipher.doFinal(encryptedPayload);
+        } catch (Exception e) {
+            throw new RuntimeException("Byte decryption failed", e);
+        }
+    }
 }

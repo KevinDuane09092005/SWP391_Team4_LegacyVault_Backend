@@ -34,12 +34,19 @@ final class FileStorageSupport {
     }
 
     static void validateFileExtension(String filename) {
-        String lower = filename.toLowerCase(Locale.ROOT);
+        String lower = stripEncryptedSuffix(filename.toLowerCase(Locale.ROOT));
         boolean matched = ALLOWED_EXTENSIONS.stream().anyMatch(lower::endsWith);
         if (!matched) {
             throw new IllegalArgumentException(
                     "Invalid file extension. Allowed extensions are: " + String.join(", ", ALLOWED_EXTENSIONS));
         }
+    }
+
+    static String stripEncryptedSuffix(String filename) {
+        if (filename != null && filename.toLowerCase(Locale.ROOT).endsWith(".enc")) {
+            return filename.substring(0, filename.length() - 4);
+        }
+        return filename;
     }
 
     static String buildStoredFilename(String originalFilename, boolean sanitizeForUrl) {
@@ -73,7 +80,7 @@ final class FileStorageSupport {
     }
 
     static String inferContentType(String filename) {
-        String lower = filename.toLowerCase(Locale.ROOT);
+        String lower = stripEncryptedSuffix(filename.toLowerCase(Locale.ROOT));
         if (lower.endsWith(".pdf")) {
             return "application/pdf";
         } else if (lower.endsWith(".png")) {

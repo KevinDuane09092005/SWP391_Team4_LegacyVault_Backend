@@ -277,21 +277,13 @@ public class HandoverExecutionService {
                     "Automatic Release", "AUTHORIZED & LOCKED"));
         } else {
             for (Asset a : assets) {
-                String decrypted = null;
-                if (a.getEncryptedCredentials() != null && !a.getEncryptedCredentials().isEmpty()) {
-                    try {
-                        decrypted = encryptionService.decrypt(a.getEncryptedCredentials());
-                    } catch (Exception e) {
-                        logger.warn("Could not decrypt asset credentials {}: {}", a.getAssetId(), e.getMessage());
-                    }
-                }
                 assetItems.add(new HandoverDetailsResponse.HandoverAssetItem(
                         a.getAssetId(),
                         a.getAssetName(),
                         a.getAssetType() != null ? a.getAssetType() : "General Asset",
                         a.getDescription(),
-                        decrypted,
-                        a.getAttachmentUrl(),
+                        null,
+                        null,
                         "Legal Verification",
                         "RELEASED".equalsIgnoreCase(c.getStatus()) || "COMPLETED".equalsIgnoreCase(c.getStatus()) ? "AUTHORIZED" : "AUTHORIZED & LOCKED"));
             }

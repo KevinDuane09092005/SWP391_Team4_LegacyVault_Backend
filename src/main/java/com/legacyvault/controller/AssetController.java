@@ -9,7 +9,7 @@ import com.legacyvault.service.FileStorageService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -18,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -49,11 +50,8 @@ public class AssetController {
             Authentication authentication,
             @RequestParam("file") MultipartFile file) {
         try {
-            getAuthenticatedUserId(authentication);
-            if (fileStorageService == null) {
-                throw new IllegalStateException("File storage service is not available");
-            }
-            StoredFileInfo stored = fileStorageService.storeFile(file, "asset-documents");
+            String ownerId = getAuthenticatedUserId(authentication);
+            StoredFileInfo stored = assetService.storeEncryptedAssetDocument(ownerId, file, fileStorageService);
             String baseUrl = (backendBaseUrl != null && !backendBaseUrl.isBlank())
                     ? backendBaseUrl.trim().replaceAll("/$", "")
                     : "http://localhost:8080";
@@ -71,36 +69,37 @@ public class AssetController {
     }
 
     @GetMapping("/documents/{storedFileName}")
-    public ResponseEntity<Resource> viewOrDownloadAssetDocument(
-            @PathVariable("storedFileName") String storedFileName) {
+    public ResponseEntity<?> viewOrDownloadAssetDocument(
+            Authentication authentication,
+            @PathVariable("storedFileName") String storedFileName,
+            @RequestParam(value = "asset_id", required = false) String assetId,
+            @RequestParam(value = "case_ref", required = false) String caseRef,
+            @RequestParam(value = "download", required = false) Boolean download) {
         try {
-            if (fileStorageService == null) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-            }
-            Resource resource = fileStorageService.loadFileAsResource("asset-documents/" + storedFileName);
-            int underscoreIdx = storedFileName.indexOf('_');
-            String displayFileName = underscoreIdx > 0 && underscoreIdx < storedFileName.length() - 1
-                    ? storedFileName.substring(underscoreIdx + 1)
-                    : storedFileName;
+            String requesterId = (authentication != null && authentication.getName() != null)
+                    ? authentication.getName()
+                    : null;
+            AssetService.DecryptedAssetDocument doc = assetService.loadDecryptedAssetDocument(
+                    storedFileName, requesterId, assetId, caseRef, fileStorageService);
 
+            String displayFileName = doc.getDisplayFileName();
             String lower = displayFileName.toLowerCase(Locale.ROOT);
-            String contentType = "application/octet-stream";
-            if (lower.endsWith(".pdf")) contentType = "application/pdf";
-            else if (lower.endsWith(".png")) contentType = "image/png";
-            else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) contentType = "image/jpeg";
-            else if (lower.endsWith(".txt")) contentType = "text/plain; charset=UTF-8";
-            else if (lower.endsWith(".docx")) contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            boolean forceAttachment = Boolean.TRUE.equals(download) || lower.endsWith(".docx");
 
-            ContentDisposition disposition = lower.endsWith(".docx")
+            ContentDisposition disposition = forceAttachment
                     ? ContentDisposition.attachment().filename(displayFileName, StandardCharsets.UTF_8).build()
                     : ContentDisposition.inline().filename(displayFileName, StandardCharsets.UTF_8).build();
 
             return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(contentType))
+                    .contentType(MediaType.parseMediaType(doc.getContentType()))
                     .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-                    .body(resource);
+                    .body(new ByteArrayResource(doc.getContent()));
+        } catch (ResponseStatusException e) {
+            String reason = e.getReason() != null ? e.getReason() : "Access denied";
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", reason));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", e.getMessage() != null ? e.getMessage() : "Document not found"));
         }
     }
 
