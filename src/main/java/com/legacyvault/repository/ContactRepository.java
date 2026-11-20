@@ -2,13 +2,15 @@ package com.legacyvault.repository;
 
 import com.legacyvault.entity.Contact;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface ContactRepository extends JpaRepository<Contact, String>, ContactRepositoryCustom {
+public interface ContactRepository extends JpaRepository<Contact, String> {
 
     List<Contact> findByOwnerId(String ownerId);
 
@@ -25,4 +27,10 @@ public interface ContactRepository extends JpaRepository<Contact, String>, Conta
     List<Contact> findByEmailIgnoreCaseAndStatus(String email, String status);
 
     Optional<Contact> findFirstByEmail(String email);
+
+    @Query("SELECT c FROM Contact c WHERE c.ownerId = :ownerId AND " +
+           "(:keyword IS NULL OR :keyword = '' OR " +
+           "LOWER(c.fullName) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(c.email) LIKE LOWER(CONCAT('%', :keyword, '%')))")
+    List<Contact> searchContacts(@Param("ownerId") String ownerId, @Param("keyword") String keyword);
 }
