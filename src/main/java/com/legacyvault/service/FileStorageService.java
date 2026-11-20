@@ -41,4 +41,16 @@ public interface FileStorageService {
      * @return true if exists
      */
     boolean exists(String relativePath);
+
+    /**
+     * Overwrite or write raw bytes directly to an existing relative path.
+     *
+     * @param relativePath relative file path (e.g., "asset-documents/uuid_file.pdf.enc")
+     * @param content      raw bytes to write
+     * @param contentType  MIME content type
+     * @throws IOException if writing fails
+     */
+    default void overwriteFile(String relativePath, byte[] content, String contentType) throws IOException {
+        throw new UnsupportedOperationException("overwriteFile is not supported by this storage implementation");
+    }
 }

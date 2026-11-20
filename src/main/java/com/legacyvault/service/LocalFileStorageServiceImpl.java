@@ -128,4 +128,24 @@ public class LocalFileStorageServiceImpl implements FileStorageService {
         Path filePath = this.rootLocation.resolve(StringUtils.cleanPath(relativePath)).normalize();
         return filePath.startsWith(this.rootLocation) && Files.exists(filePath);
     }
+
+    @Override
+    public void overwriteFile(String relativePath, byte[] content, String contentType) throws IOException {
+        if (relativePath == null || relativePath.isBlank()) {
+            throw new FileNotFoundException("File path cannot be empty");
+        }
+        Path filePath = this.rootLocation.resolve(StringUtils.cleanPath(relativePath)).normalize();
+        if (!filePath.startsWith(this.rootLocation)) {
+            throw new SecurityException("Cannot write file outside configured storage root: " + relativePath);
+        }
+        if (filePath.getParent() != null) {
+            Files.createDirectories(filePath.getParent());
+        }
+        Files.write(
+                filePath,
+                content != null ? content : new byte[0],
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
+    }
 }

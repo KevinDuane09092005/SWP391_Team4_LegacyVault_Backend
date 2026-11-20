@@ -34,6 +34,9 @@ class BeneficiaryHandoverServiceTest {
     private AssetRepository assetRepository;
 
     @Mock
+    private AssetKeyRepository assetKeyRepository;
+
+    @Mock
     private AssetAssignmentRepository assetAssignmentRepository;
 
     @Mock
@@ -213,8 +216,18 @@ class BeneficiaryHandoverServiceTest {
     void testGetDecryptedAssetDetail() {
         stubVerifiedFaceClaim();
         Asset mockAsset = new Asset("owner-1", "crypto_wallet", "Primary Vault Ledger Key", "desc", "encrypted-val", null);
+        mockAsset.setAssetId("ASSET-1042-A");
+
+        AssetAssignment assignment = new AssetAssignment("ASSET-1042-A", "exec-1", "inst");
+        assignment.setAssignmentId("assign-1042-a");
+        when(assetAssignmentRepository.findByAssetId("ASSET-1042-A")).thenReturn(Optional.of(assignment));
+        when(assignmentBeneficiaryRepository.findByAssignmentId("assign-1042-a"))
+                .thenReturn(List.of(new AssignmentBeneficiary("assign-1042-a", "beneficiary-uuid-1")));
         when(assetRepository.findById("ASSET-1042-A")).thenReturn(Optional.of(mockAsset));
-        when(encryptionService.decrypt("encrypted-val")).thenReturn("autumn · harbor · classic · secure · vault · inheritance · legacy");
+        when(assetKeyRepository.findByAssetId("ASSET-1042-A"))
+                .thenReturn(Optional.of(new AssetKey("ASSET-1042-A", "per-asset-aes-key-1042")));
+        when(encryptionService.decryptWithKey("encrypted-val", "per-asset-aes-key-1042"))
+                .thenReturn("autumn · harbor · classic · secure · vault · inheritance · legacy");
 
         DecryptedAssetDetailResponse detail = beneficiaryHandoverService.getDecryptedAssetDetail("ASSET-1042-A", "beneficiary-uuid-1");
 

@@ -386,20 +386,14 @@ public class HandoverExecutionService {
                     if (!isAssetAssignedToBeneficiaries(a.getAssetId(), matchedContactIds)) {
                         continue;
                     }
-                    String decrypted = null;
-                    if (isAuthorized && a.getEncryptedCredentials() != null && !a.getEncryptedCredentials().isEmpty()) {
-                        try {
-                            decrypted = encryptionService.decrypt(a.getEncryptedCredentials());
-                        } catch (Exception e) {
-                            logger.warn("Could not decrypt asset credentials {}: {}", a.getAssetId(), e.getMessage());
-                        }
-                    }
+                    // Do not pre-decrypt credentials in the case overview endpoint;
+                    // decryption happens strictly when the designated beneficiary clicks Reveal on the asset.
                     assetItems.add(new HandoverDetailsResponse.HandoverAssetItem(
                             a.getAssetId(),
                             a.getAssetName(),
                             a.getAssetType() != null ? a.getAssetType() : "General Asset",
                             a.getDescription(),
-                            decrypted,
+                            null,
                             a.getAttachmentUrl(),
                             "Legal Verification",
                             isAuthorized ? "AUTHORIZED" : "AUTHORIZED & LOCKED"));

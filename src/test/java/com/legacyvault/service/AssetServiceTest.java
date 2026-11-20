@@ -6,12 +6,14 @@ import com.legacyvault.dto.StoredFileInfo;
 import com.legacyvault.dto.UpdateAssetRequest;
 import com.legacyvault.entity.Asset;
 import com.legacyvault.entity.AssetAssignment;
+import com.legacyvault.entity.AssetKey;
 import com.legacyvault.entity.AssignmentBeneficiary;
 import com.legacyvault.entity.BeneficiaryClaimSession;
 import com.legacyvault.entity.Contact;
 import com.legacyvault.entity.HandoverCase;
 import com.legacyvault.entity.User;
 import com.legacyvault.repository.AssetAssignmentRepository;
+import com.legacyvault.repository.AssetKeyRepository;
 import com.legacyvault.repository.AssetRepository;
 import com.legacyvault.repository.AssignmentBeneficiaryRepository;
 import com.legacyvault.repository.BeneficiaryClaimSessionRepository;
@@ -47,6 +49,9 @@ public class AssetServiceTest {
     private AssetRepository assetRepository;
 
     @Mock
+    private AssetKeyRepository assetKeyRepository;
+
+    @Mock
     private FileStorageService fileStorageService;
 
     @Mock
@@ -73,12 +78,14 @@ public class AssetServiceTest {
     private EncryptionService encryptionService;
     private AssetService assetService;
     private Asset testAsset;
+    private AssetKey testAssetKey;
 
     @BeforeEach
     void setUp() {
-        encryptionService = new EncryptionService("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        encryptionService = new EncryptionService();
         assetService = new AssetService(
                 assetRepository,
+                assetKeyRepository,
                 encryptionService,
                 fileStorageService,
                 assetAssignmentRepository,
@@ -90,7 +97,13 @@ public class AssetServiceTest {
                 contactRepository
         );
 
-        String encryptedPayload = encryptionService.encrypt("raw_password_123");
+        String initialAesKey = encryptionService.generateRandomAesKey();
+        testAssetKey = new AssetKey("asset-uuid-1", initialAesKey);
+        testAssetKey.setKeyId("key-uuid-1");
+        lenient().when(assetKeyRepository.findByAssetId("asset-uuid-1"))
+                .thenReturn(Optional.of(testAssetKey));
+
+        String encryptedPayload = encryptionService.encryptWithKey("raw_password_123", initialAesKey);
         testAsset = new Asset(
                 "owner-uuid",
                 "Bank Account",
@@ -124,6 +137,11 @@ public class AssetServiceTest {
         assertEquals("Primary Savings", response.getAssetName());
         assertEquals("Bank Account", response.getAssetType());
         verify(assetRepository, times(1)).save(any(Asset.class));
+
+        ArgumentCaptor<AssetKey> keyCaptor = ArgumentCaptor.forClass(AssetKey.class);
+        verify(assetKeyRepository, times(1)).save(keyCaptor.capture());
+        assertEquals("generated-uuid", keyCaptor.getValue().getAssetId());
+        assertNotNull(keyCaptor.getValue().getAesKey());
     }
 
     @Test
@@ -293,18 +311,45 @@ public class AssetServiceTest {
         assertEquals("550e8400-e29b-41d4-a716-446655440000_filea.pdf.enc", result.getStoredFileName());
         assertEquals(rawPdf.length, result.getSizeBytes());
 
-        MultipartFile capturedEncryptedFile = fileCaptor.getValue();
-        assertEquals("filea.pdf.enc", capturedEncryptedFile.getOriginalFilename());
-        byte[] encryptedPayload = capturedEncryptedFile.getBytes();
-        assertFalse(java.util.Arrays.equals(rawPdf, encryptedPayload));
-        assertArrayEquals(rawPdf, encryptionService.decryptBytes(encryptedPayload));
+        // Now simulate createAsset encrypting the staged .enc file with the newly generated per-asset key in asset_keys
+        String docUrl = "http://localhost:8080/api/v1/assets/documents/" + result.getStoredFileName();
+        when(fileStorageService.loadFileAsResource("asset-documents/" + result.getStoredFileName()))
+                .thenReturn(new ByteArrayResource(rawPdf));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(inv -> {
+            Asset a = inv.getArgument(0);
+            a.setAssetId("new-asset-id");
+            return a;
+        });
+
+        assetService.createAsset("owner-uuid", new CreateAssetRequest(
+                "Important Document", "Legal Will", "Desc", "secret_pin", docUrl));
+
+        ArgumentCaptor<AssetKey> savedKeyCaptor = ArgumentCaptor.forClass(AssetKey.class);
+        verify(assetKeyRepository).save(savedKeyCaptor.capture());
+        String generatedAssetKey = savedKeyCaptor.getValue().getAesKey();
+
+        ArgumentCaptor<byte[]> encryptedBytesCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(fileStorageService).overwriteFile(
+                eq("asset-documents/" + result.getStoredFileName()),
+                encryptedBytesCaptor.capture(),
+                eq("application/octet-stream"));
+
+        byte[] encryptedOnDisk = encryptedBytesCaptor.getValue();
+        assertFalse(java.util.Arrays.equals(rawPdf, encryptedOnDisk));
+        assertArrayEquals(rawPdf, encryptionService.decryptBytesWithKey(encryptedOnDisk, generatedAssetKey));
     }
 
     @Test
-    void testUpdateAsset_DeletesPhysicallyRemovedDocumentFilesOnly() {
+    void testUpdateAsset_DeletesPhysicallyRemovedDocumentFilesAndRotatesAssetKeyRecord() throws Exception {
         String keptUrl = "http://localhost:8080/api/v1/assets/documents/1111_kept.pdf.enc";
         String removedUrl = "http://localhost:8080/api/v1/assets/documents/2222_removed.pdf.enc";
         testAsset.setAttachmentUrl(keptUrl + ", " + removedUrl);
+
+        String oldAesKey = testAssetKey.getAesKey();
+        byte[] keptPlainBytes = "Kept file original content".getBytes(StandardCharsets.UTF_8);
+        byte[] keptOldEncryptedBytes = encryptionService.encryptBytesWithKey(keptPlainBytes, oldAesKey);
+        when(fileStorageService.loadFileAsResource("asset-documents/1111_kept.pdf.enc"))
+                .thenReturn(new ByteArrayResource(keptOldEncryptedBytes));
 
         when(assetRepository.findByAssetIdAndOwnerId("asset-uuid-1", "owner-uuid"))
                 .thenReturn(Optional.of(testAsset));
@@ -320,12 +365,30 @@ public class AssetServiceTest {
 
         assetService.updateAsset("owner-uuid", "asset-uuid-1", request);
 
+        // 1. Removed file is physically deleted, kept file is not deleted
         verify(fileStorageService, times(1)).deleteFile("asset-documents/2222_removed.pdf.enc");
         verify(fileStorageService, never()).deleteFile("asset-documents/1111_kept.pdf.enc");
+
+        // 2. Method A: Old key record is deleted and a brand-new key record is inserted in asset_keys
+        verify(assetKeyRepository, times(1)).delete(testAssetKey);
+        verify(assetKeyRepository, times(1)).flush();
+        ArgumentCaptor<AssetKey> newKeyCaptor = ArgumentCaptor.forClass(AssetKey.class);
+        verify(assetKeyRepository, times(1)).save(newKeyCaptor.capture());
+        String newAesKey = newKeyCaptor.getValue().getAesKey();
+        assertNotEquals(oldAesKey, newAesKey);
+
+        // 3. Kept file and credentials are re-encrypted with the new key in asset_keys
+        assertEquals("raw_password_123", encryptionService.decryptWithKey(testAsset.getEncryptedCredentials(), newAesKey));
+        ArgumentCaptor<byte[]> reEncryptedFileCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(fileStorageService).overwriteFile(
+                eq("asset-documents/1111_kept.pdf.enc"),
+                reEncryptedFileCaptor.capture(),
+                eq("application/octet-stream"));
+        assertArrayEquals(keptPlainBytes, encryptionService.decryptBytesWithKey(reEncryptedFileCaptor.getValue(), newAesKey));
     }
 
     @Test
-    void testDeleteAsset_DeletesAllAttachedDocumentFiles() {
+    void testDeleteAsset_DeletesAllAttachedDocumentFilesAndAssetKeyRecord() {
         String doc1 = "http://localhost:8080/api/v1/assets/documents/1111_doc1.pdf.enc";
         String doc2 = "http://localhost:8080/api/v1/assets/documents/2222_doc2.png.enc";
         testAsset.setAttachmentUrl(doc1 + ", " + doc2);
@@ -335,6 +398,7 @@ public class AssetServiceTest {
 
         assetService.deleteAsset("owner-uuid", "asset-uuid-1");
 
+        verify(assetKeyRepository, times(1)).delete(testAssetKey);
         verify(assetRepository, times(1)).delete(testAsset);
         verify(fileStorageService, times(1)).deleteFile("asset-documents/1111_doc1.pdf.enc");
         verify(fileStorageService, times(1)).deleteFile("asset-documents/2222_doc2.png.enc");
@@ -344,7 +408,7 @@ public class AssetServiceTest {
     void testLoadDecryptedAssetDocument_OwnerAndDesignatedBeneficiaryAndUnauthorizedAccess() throws Exception {
         String storedFileName = "550e8400-e29b-41d4-a716-446655440000_filea.pdf.enc";
         byte[] rawContent = "Confidential Legal Estate Document".getBytes(StandardCharsets.UTF_8);
-        byte[] encryptedContent = encryptionService.encryptBytes(rawContent);
+        byte[] encryptedContent = encryptionService.encryptBytesWithKey(rawContent, testAssetKey.getAesKey());
 
         testAsset.setAttachmentUrl("http://localhost:8080/api/v1/assets/documents/" + storedFileName);
         when(assetRepository.findById("asset-uuid-1")).thenReturn(Optional.of(testAsset));

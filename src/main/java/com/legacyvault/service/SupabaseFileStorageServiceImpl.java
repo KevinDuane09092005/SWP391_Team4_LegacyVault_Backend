@@ -163,6 +163,29 @@ public class SupabaseFileStorageServiceImpl implements FileStorageService {
         }
     }
 
+    @Override
+    public void overwriteFile(String relativePath, byte[] content, String contentType) throws IOException {
+        String objectPath = normalizeObjectPath(relativePath);
+        if (objectPath.isEmpty()) {
+            throw new FileNotFoundException("File path cannot be empty");
+        }
+        String effectiveContentType = (contentType != null && !contentType.isBlank())
+                ? contentType
+                : "application/octet-stream";
+        byte[] payload = content != null ? content : new byte[0];
+
+        HttpRequest request = authorizedRequest(objectUri(objectPath))
+                .header("Content-Type", effectiveContentType)
+                .header("x-upsert", "true")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
+                .build();
+
+        HttpResponse<String> response = send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("Supabase Storage overwrite failed (" + response.statusCode() + "): " + response.body());
+        }
+    }
+
     private HttpRequest.Builder authorizedRequest(URI uri) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(REQUEST_TIMEOUT)

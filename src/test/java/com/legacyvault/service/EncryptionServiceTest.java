@@ -62,4 +62,26 @@ public class EncryptionServiceTest {
         assertNull(encryptionService.decryptBytes(null));
         assertArrayEquals(new byte[0], encryptionService.decryptBytes(new byte[0]));
     }
+
+    @Test
+    void testPerAssetKeyGenerationAndIsolation() {
+        EncryptionService strictService = new EncryptionService();
+        String keyAsset1 = strictService.generateRandomAesKey();
+        String keyAsset2 = strictService.generateRandomAesKey();
+
+        assertNotNull(keyAsset1);
+        assertNotNull(keyAsset2);
+        assertEquals(64, keyAsset1.length());
+        assertEquals(64, keyAsset2.length());
+        assertNotEquals(keyAsset1, keyAsset2);
+
+        String cipher1 = strictService.encryptWithKey("SecretForAsset1", keyAsset1);
+        assertEquals("SecretForAsset1", strictService.decryptWithKey(cipher1, keyAsset1));
+        assertThrows(RuntimeException.class, () -> strictService.decryptWithKey(cipher1, keyAsset2));
+
+        byte[] rawDoc = "LegalPdfContent".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] encDoc = strictService.encryptBytesWithKey(rawDoc, keyAsset1);
+        assertArrayEquals(rawDoc, strictService.decryptBytesWithKey(encDoc, keyAsset1));
+        assertThrows(RuntimeException.class, () -> strictService.decryptBytesWithKey(encDoc, keyAsset2));
+    }
 }

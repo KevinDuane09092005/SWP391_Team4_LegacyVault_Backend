@@ -5,6 +5,7 @@ import com.legacyvault.entity.*;
 import com.legacyvault.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ public class BeneficiaryHandoverService {
     private final UserRepository userRepository;
     private final ContactRepository contactRepository;
     private final AssetRepository assetRepository;
+    private final AssetKeyRepository assetKeyRepository;
     private final AssetAssignmentRepository assetAssignmentRepository;
     private final AssignmentBeneficiaryRepository assignmentBeneficiaryRepository;
     private final BeneficiaryClaimSessionRepository claimSessionRepository;
@@ -46,10 +48,40 @@ public class BeneficiaryHandoverService {
                                      EncryptionService encryptionService,
                                      JwtService jwtService,
                                      EmailService emailService) {
+        this(
+                handoverCaseRepository,
+                userRepository,
+                contactRepository,
+                assetRepository,
+                null,
+                assetAssignmentRepository,
+                assignmentBeneficiaryRepository,
+                claimSessionRepository,
+                handoverReceiptRepository,
+                encryptionService,
+                jwtService,
+                emailService
+        );
+    }
+
+    @Autowired
+    public BeneficiaryHandoverService(HandoverCaseRepository handoverCaseRepository,
+                                     UserRepository userRepository,
+                                     ContactRepository contactRepository,
+                                     AssetRepository assetRepository,
+                                     AssetKeyRepository assetKeyRepository,
+                                     AssetAssignmentRepository assetAssignmentRepository,
+                                     AssignmentBeneficiaryRepository assignmentBeneficiaryRepository,
+                                     BeneficiaryClaimSessionRepository claimSessionRepository,
+                                     HandoverReceiptRepository handoverReceiptRepository,
+                                     EncryptionService encryptionService,
+                                     JwtService jwtService,
+                                     EmailService emailService) {
         this.handoverCaseRepository = handoverCaseRepository;
         this.userRepository = userRepository;
         this.contactRepository = contactRepository;
         this.assetRepository = assetRepository;
+        this.assetKeyRepository = assetKeyRepository;
         this.assetAssignmentRepository = assetAssignmentRepository;
         this.assignmentBeneficiaryRepository = assignmentBeneficiaryRepository;
         this.claimSessionRepository = claimSessionRepository;
@@ -343,68 +375,75 @@ public class BeneficiaryHandoverService {
     @Transactional(readOnly = true)
     public DecryptedAssetDetailResponse getDecryptedAssetDetail(
             String assetId, String beneficiaryContactId, String caseReference) {
+        if (assetId == null || assetId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Asset ID is required");
+        }
         BeneficiaryClaimSession verifiedSession = requireVerifiedFace(beneficiaryContactId, caseReference);
         String effectiveContactId = verifiedSession.getBeneficiaryContactId() != null
                 ? verifiedSession.getBeneficiaryContactId()
                 : resolveBeneficiaryContactId(caseReference, beneficiaryContactId);
 
-        if (assetAssignmentRepository != null && assignmentBeneficiaryRepository != null && assetId != null) {
-            Optional<AssetAssignment> optAssignment = assetAssignmentRepository.findByAssetId(assetId);
-            if (optAssignment.isPresent()) {
-                List<AssignmentBeneficiary> links = assignmentBeneficiaryRepository
-                        .findByAssignmentId(optAssignment.get().getAssignmentId());
-                if (links != null && !links.isEmpty()) {
-                    boolean authorized = links.stream().anyMatch(link ->
-                            (effectiveContactId != null && effectiveContactId.equals(link.getBeneficiaryContactId()))
-                                    || (beneficiaryContactId != null
-                                            && beneficiaryContactId.equals(link.getBeneficiaryContactId())));
-                    if (!authorized) {
-                        throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                                "You are not authorized to access this asset");
-                    }
+        // 1. Verify that this specific asset is explicitly assigned to this beneficiary
+        if (assetAssignmentRepository == null || assignmentBeneficiaryRepository == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "You are not authorized to access this asset");
+        }
+        Optional<AssetAssignment> optAssignment = assetAssignmentRepository.findByAssetId(assetId);
+        if (optAssignment.isEmpty() || optAssignment.get().getAssignmentId() == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "You are not authorized to access this asset");
+        }
+        List<AssignmentBeneficiary> links = assignmentBeneficiaryRepository
+                .findByAssignmentId(optAssignment.get().getAssignmentId());
+        boolean authorized = links != null && links.stream().anyMatch(link ->
+                (effectiveContactId != null && effectiveContactId.equals(link.getBeneficiaryContactId()))
+                        || (beneficiaryContactId != null
+                                && beneficiaryContactId.equals(link.getBeneficiaryContactId())));
+        if (!authorized) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "You are not authorized to access this asset");
+        }
+
+        // 2. Load the exact asset (no fallback to other assets)
+        Asset asset = assetRepository.findById(assetId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Asset not found"));
+
+        // 3. Fetch this asset's dedicated AES key from asset_keys table and decrypt credentials
+        String passphrase = "";
+        if (asset.getEncryptedCredentials() != null && !asset.getEncryptedCredentials().isEmpty()) {
+            if (assetKeyRepository == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Encryption key repository is not available");
+            }
+            AssetKey assetKey = assetKeyRepository.findByAssetId(asset.getAssetId())
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.NOT_FOUND,
+                            "Encryption key not found in asset_keys for asset: " + asset.getAssetId()));
+            try {
+                String decrypted = encryptionService.decryptWithKey(
+                        asset.getEncryptedCredentials(), assetKey.getAesKey());
+                if (decrypted != null) {
+                    passphrase = decrypted;
                 }
+            } catch (Exception e) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "Failed to decrypt asset credentials with asset key", e);
             }
         }
 
-        String passphrase = "autumn · harbor · classic · secure · vault · inheritance · legacy";
         String accessUrl = "https://secure-ledger.legacyvault.com/hardware-024";
-
-        // If asset exists in DB and has encrypted credentials, attempt decryption
-        Optional<Asset> optAsset = assetRepository.findById(assetId);
-        if (optAsset.isEmpty()) {
-            List<Asset> allAssets = assetRepository.findAll();
-            if (!allAssets.isEmpty()) {
-                optAsset = allAssets.stream().filter(a -> a.getAssetId() != null && a.getAssetId().equalsIgnoreCase(assetId)).findFirst();
-                if (optAsset.isEmpty()) {
-                    optAsset = Optional.of(allAssets.get(0));
-                }
-            }
-        }
-        if (optAsset.isPresent()) {
-            Asset asset = optAsset.get();
-            if (asset.getEncryptedCredentials() != null && !asset.getEncryptedCredentials().isEmpty()) {
-                try {
-                    String decrypted = encryptionService.decrypt(asset.getEncryptedCredentials());
-                    if (decrypted != null && !decrypted.isEmpty()) {
-                        passphrase = decrypted;
-                    }
-                } catch (Exception e) {
-                    logger.warn("Could not decrypt credential, using default fallback: {}", e.getMessage());
-                }
-            }
-        }
-
         List<String> auditLogs = Arrays.asList(
                 "Court order validated against Department of Justice Database — Approved Oct 24, 2026",
                 "Cryptographic zero-knowledge key parity check verified — SHA-256 integrity passed",
                 "Executor Minh Le confirmed digital probate authorization certificate (CERT-2026-992)"
         );
 
-        String finalAssetName = optAsset.map(Asset::getAssetName).orElse("Primary Vault Ledger Key");
-        String finalSubtitle = optAsset.map(Asset::getAssetType).orElse("Legacy Digital Credential Vault");
-        String finalInstructions = optAsset.map(Asset::getDescription).filter(d -> !d.isEmpty())
-                .orElse("This cold storage recovery key controls the secondary backup multi-sig wallet for estate inheritance assets. Keep this private key strictly secure. Do not share, photocopy, or upload to public cloud providers.");
-        String finalAssetId = optAsset.map(Asset::getAssetId).orElse(assetId != null ? assetId : "ASSET-1042-A");
+        String finalAssetName = asset.getAssetName() != null ? asset.getAssetName() : "Primary Vault Ledger Key";
+        String finalSubtitle = asset.getAssetType() != null ? asset.getAssetType() : "Legacy Digital Credential Vault";
+        String finalInstructions = (asset.getDescription() != null && !asset.getDescription().isEmpty())
+                ? asset.getDescription()
+                : "This cold storage recovery key controls the secondary backup multi-sig wallet for estate inheritance assets. Keep this private key strictly secure. Do not share, photocopy, or upload to public cloud providers.";
+        String finalAssetId = asset.getAssetId() != null ? asset.getAssetId() : assetId;
 
         return new DecryptedAssetDetailResponse(
                 finalAssetId,
@@ -422,7 +461,7 @@ public class BeneficiaryHandoverService {
                 ),
                 auditLogs,
                 new DecryptedAssetDetailResponse.HandoverMetadata(
-                        "LV-1042",
+                        caseReference != null && !caseReference.isBlank() ? caseReference : "LV-1042",
                         "Thanh Pham",
                         "Linh Pham"
                 ),

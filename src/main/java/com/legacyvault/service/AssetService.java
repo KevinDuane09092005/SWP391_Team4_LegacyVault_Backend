@@ -6,6 +6,7 @@ import com.legacyvault.dto.StoredFileInfo;
 import com.legacyvault.dto.UpdateAssetRequest;
 import com.legacyvault.entity.Asset;
 import com.legacyvault.entity.AssetAssignment;
+import com.legacyvault.entity.AssetKey;
 import com.legacyvault.entity.AssignmentBeneficiary;
 import com.legacyvault.entity.BeneficiaryClaimSession;
 import com.legacyvault.entity.Contact;
@@ -13,6 +14,7 @@ import com.legacyvault.entity.HandoverCase;
 import com.legacyvault.entity.HandoverReceipt;
 import com.legacyvault.entity.User;
 import com.legacyvault.repository.AssetAssignmentRepository;
+import com.legacyvault.repository.AssetKeyRepository;
 import com.legacyvault.repository.AssetRepository;
 import com.legacyvault.repository.AssignmentBeneficiaryRepository;
 import com.legacyvault.repository.BeneficiaryClaimSessionRepository;
@@ -53,6 +55,7 @@ public class AssetService {
     private static final String ASSET_DOCUMENTS_DIR = "asset-documents";
 
     private final AssetRepository assetRepository;
+    private final AssetKeyRepository assetKeyRepository;
     private final EncryptionService encryptionService;
     private final FileStorageService fileStorageService;
     private final AssetAssignmentRepository assetAssignmentRepository;
@@ -64,10 +67,16 @@ public class AssetService {
     private final ContactRepository contactRepository;
 
     public AssetService(AssetRepository assetRepository, EncryptionService encryptionService) {
-        this(assetRepository, encryptionService, null, null, null, null, null, null, null, null);
+        this(assetRepository, null, encryptionService, null, null, null, null, null, null, null, null);
     }
 
-    @Autowired
+    public AssetService(
+            AssetRepository assetRepository,
+            AssetKeyRepository assetKeyRepository,
+            EncryptionService encryptionService) {
+        this(assetRepository, assetKeyRepository, encryptionService, null, null, null, null, null, null, null, null);
+    }
+
     public AssetService(
             AssetRepository assetRepository,
             EncryptionService encryptionService,
@@ -79,7 +88,36 @@ public class AssetService {
             HandoverReceiptRepository handoverReceiptRepository,
             UserRepository userRepository,
             ContactRepository contactRepository) {
+        this(
+                assetRepository,
+                null,
+                encryptionService,
+                fileStorageService,
+                assetAssignmentRepository,
+                assignmentBeneficiaryRepository,
+                handoverCaseRepository,
+                claimSessionRepository,
+                handoverReceiptRepository,
+                userRepository,
+                contactRepository
+        );
+    }
+
+    @Autowired
+    public AssetService(
+            AssetRepository assetRepository,
+            AssetKeyRepository assetKeyRepository,
+            EncryptionService encryptionService,
+            FileStorageService fileStorageService,
+            AssetAssignmentRepository assetAssignmentRepository,
+            AssignmentBeneficiaryRepository assignmentBeneficiaryRepository,
+            HandoverCaseRepository handoverCaseRepository,
+            BeneficiaryClaimSessionRepository claimSessionRepository,
+            HandoverReceiptRepository handoverReceiptRepository,
+            UserRepository userRepository,
+            ContactRepository contactRepository) {
         this.assetRepository = assetRepository;
+        this.assetKeyRepository = assetKeyRepository;
         this.encryptionService = encryptionService;
         this.fileStorageService = fileStorageService;
         this.assetAssignmentRepository = assetAssignmentRepository;
@@ -97,9 +135,13 @@ public class AssetService {
             throw new IllegalArgumentException("Owner ID is required");
         }
 
+        // 1. Generate a unique AES-256 key specifically for this asset
+        String assetAesKey = encryptionService.generateRandomAesKey();
+
+        // 2. Encrypt credentials using this asset's dedicated AES key
         String encryptedCredentials = null;
         if (request.getCredentials() != null && !request.getCredentials().trim().isEmpty()) {
-            encryptedCredentials = encryptionService.encrypt(request.getCredentials());
+            encryptedCredentials = encryptionService.encryptWithKey(request.getCredentials(), assetAesKey);
         }
 
         Asset asset = new Asset(
@@ -112,6 +154,15 @@ public class AssetService {
         );
 
         Asset savedAsset = assetRepository.save(asset);
+
+        // 3. Save the per-asset key record into asset_keys table
+        if (assetKeyRepository != null && savedAsset.getAssetId() != null) {
+            assetKeyRepository.save(new AssetKey(savedAsset.getAssetId(), assetAesKey));
+        }
+
+        // 4. Encrypt all uploaded document files attached to this asset using the same per-asset AES key
+        encryptAttachedDocumentsWithKey(savedAsset.getAttachmentUrl(), assetAesKey);
+
         return mapToResponse(savedAsset, false);
     }
 
@@ -151,8 +202,9 @@ public class AssetService {
                 .orElseThrow(() -> new RuntimeException("Asset not found or access denied"));
 
         String decryptedCredentials = null;
-        if (asset.getEncryptedCredentials() != null) {
-            decryptedCredentials = encryptionService.decrypt(asset.getEncryptedCredentials());
+        if (asset.getEncryptedCredentials() != null && !asset.getEncryptedCredentials().isEmpty()) {
+            String assetAesKey = requireAssetAesKey(asset.getAssetId());
+            decryptedCredentials = encryptionService.decryptWithKey(asset.getEncryptedCredentials(), assetAesKey);
         }
 
         AssetResponse response = mapToResponse(asset, true);
@@ -185,15 +237,27 @@ public class AssetService {
 
         asset.setDescription(request.getDescription());
 
-        // Update encryptedCredentials only if new credentials are provided
+        // Method A: Fetch old key from asset_keys, delete the old key record, and insert a brand-new key record
+        String oldAesKey = requireAssetAesKey(asset.getAssetId());
+        String plainCredentials = null;
         if (request.getCredentials() != null && !request.getCredentials().trim().isEmpty()) {
-            asset.setEncryptedCredentials(encryptionService.encrypt(request.getCredentials()));
+            plainCredentials = request.getCredentials();
+        } else if (asset.getEncryptedCredentials() != null && !asset.getEncryptedCredentials().isEmpty()) {
+            plainCredentials = encryptionService.decryptWithKey(asset.getEncryptedCredentials(), oldAesKey);
+        }
+
+        String newAesKey = rotateAssetKeyRecord(asset.getAssetId());
+
+        if (plainCredentials != null && !plainCredentials.isEmpty()) {
+            asset.setEncryptedCredentials(encryptionService.encryptWithKey(plainCredentials, newAesKey));
         }
 
         String previousAttachmentUrl = asset.getAttachmentUrl();
+        Set<String> oldFiles = extractStoredDocumentFileNames(previousAttachmentUrl);
         if (request.getAttachmentUrl() != null) {
             asset.setAttachmentUrl(request.getAttachmentUrl());
         }
+        Set<String> currentFiles = extractStoredDocumentFileNames(asset.getAttachmentUrl());
 
         if (request.getStatus() != null && !request.getStatus().trim().isEmpty()) {
             asset.setStatus(request.getStatus().trim());
@@ -202,23 +266,24 @@ public class AssetService {
         asset.setUpdatedAt(LocalDateTime.now());
         Asset savedAsset = assetRepository.save(asset);
 
-        if (request.getAttachmentUrl() != null) {
-            Set<String> oldFiles = extractStoredDocumentFileNames(previousAttachmentUrl);
-            Set<String> newFiles = extractStoredDocumentFileNames(request.getAttachmentUrl());
-            for (String oldFile : oldFiles) {
-                if (!newFiles.contains(oldFile)) {
-                    deleteStoredAssetDocumentQuietly(oldFile);
-                }
+        // 1. Physically delete any removed document files
+        for (String oldFile : oldFiles) {
+            if (!currentFiles.contains(oldFile)) {
+                deleteStoredAssetDocumentQuietly(oldFile);
             }
         }
 
-        String decryptedCredentials = null;
-        if (savedAsset.getEncryptedCredentials() != null) {
-            decryptedCredentials = encryptionService.decrypt(savedAsset.getEncryptedCredentials());
+        // 2. Re-encrypt kept files from oldAesKey -> newAesKey, and encrypt newly uploaded files with newAesKey
+        for (String currentFile : currentFiles) {
+            if (oldFiles.contains(currentFile)) {
+                reEncryptStoredDocumentWithNewKey(currentFile, oldAesKey, newAesKey);
+            } else {
+                encryptSingleStoredDocumentWithKey(currentFile, newAesKey);
+            }
         }
 
         AssetResponse response = mapToResponse(savedAsset, true);
-        response.setDecryptedCredentials(decryptedCredentials);
+        response.setDecryptedCredentials(plainCredentials);
         return response;
     }
 
@@ -235,6 +300,9 @@ public class AssetService {
                 .orElseThrow(() -> new RuntimeException("Asset not found or access denied"));
 
         Set<String> attachedFiles = extractStoredDocumentFileNames(asset.getAttachmentUrl());
+        if (assetKeyRepository != null) {
+            assetKeyRepository.findByAssetId(asset.getAssetId()).ifPresent(assetKeyRepository::delete);
+        }
         assetRepository.delete(asset);
 
         for (String storedFile : attachedFiles) {
@@ -264,17 +332,16 @@ public class AssetService {
 
         try {
             byte[] plainBytes = file.getBytes();
-            byte[] encryptedBytes = encryptionService.encryptBytes(plainBytes);
             String encryptedOriginalName = originalFileName + ".enc";
 
-            MultipartFile encryptedMultipartFile = new InMemoryMultipartFile(
+            MultipartFile pendingEncryptedMultipartFile = new InMemoryMultipartFile(
                     file.getName() != null ? file.getName() : "file",
                     encryptedOriginalName,
                     "application/octet-stream",
-                    encryptedBytes
+                    plainBytes
             );
 
-            StoredFileInfo stored = storage.storeFile(encryptedMultipartFile, ASSET_DOCUMENTS_DIR);
+            StoredFileInfo stored = storage.storeFile(pendingEncryptedMultipartFile, ASSET_DOCUMENTS_DIR);
             return new StoredFileInfo(
                     stored.getStoredFileName(),
                     originalFileName,
@@ -284,7 +351,7 @@ public class AssetService {
                     stored.getSha256Checksum()
             );
         } catch (IOException e) {
-            throw new RuntimeException("Failed to read and encrypt uploaded document", e);
+            throw new RuntimeException("Failed to stage uploaded document for encryption", e);
         }
     }
 
@@ -325,13 +392,17 @@ public class AssetService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Asset document not found");
         }
 
-        boolean authorized = matchingAssets.stream()
-                .anyMatch(asset -> isAuthorizedToAccessAssetDocument(asset, requesterId.trim(), caseRef));
-        if (!authorized) {
+        Asset authorizedAsset = matchingAssets.stream()
+                .filter(asset -> isAuthorizedToAccessAssetDocument(asset, requesterId.trim(), caseRef))
+                .findFirst()
+                .orElse(null);
+        if (authorizedAsset == null) {
             throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
                     "Access denied: You are not authorized to decrypt or view this asset document");
         }
+
+        String assetAesKey = requireAssetAesKey(authorizedAsset.getAssetId());
 
         try {
             Resource resource = storage.loadFileAsResource(ASSET_DOCUMENTS_DIR + "/" + normalizedFileName);
@@ -341,7 +412,7 @@ public class AssetService {
             }
 
             byte[] plainBytes = normalizedFileName.toLowerCase(Locale.ROOT).endsWith(".enc")
-                    ? encryptionService.decryptBytes(storedBytes)
+                    ? encryptionService.decryptBytesWithKey(storedBytes, assetAesKey)
                     : storedBytes;
 
             String displayFileName = extractDisplayFileName(normalizedFileName);
@@ -350,7 +421,77 @@ public class AssetService {
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Asset document could not be loaded", e);
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Asset document could not be loaded or decrypted", e);
+        }
+    }
+
+    private String requireAssetAesKey(String assetId) {
+        if (assetKeyRepository == null || assetId == null || assetId.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Asset encryption key repository or asset ID is not available");
+        }
+        return assetKeyRepository.findByAssetId(assetId.trim())
+                .map(AssetKey::getAesKey)
+                .filter(k -> k != null && !k.isBlank())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Encryption key not found in asset_keys for asset: " + assetId));
+    }
+
+    private String rotateAssetKeyRecord(String assetId) {
+        String newAesKey = encryptionService.generateRandomAesKey();
+        if (assetKeyRepository != null && assetId != null) {
+            assetKeyRepository.findByAssetId(assetId).ifPresent(oldRecord -> {
+                assetKeyRepository.delete(oldRecord);
+                assetKeyRepository.flush();
+            });
+            assetKeyRepository.save(new AssetKey(assetId, newAesKey));
+        }
+        return newAesKey;
+    }
+
+    private void encryptAttachedDocumentsWithKey(String attachmentUrl, String assetAesKey) {
+        Set<String> storedFiles = extractStoredDocumentFileNames(attachmentUrl);
+        for (String storedFileName : storedFiles) {
+            encryptSingleStoredDocumentWithKey(storedFileName, assetAesKey);
+        }
+    }
+
+    private void encryptSingleStoredDocumentWithKey(String storedFileName, String assetAesKey) {
+        if (fileStorageService == null || storedFileName == null || storedFileName.isBlank()) {
+            return;
+        }
+        String relativePath = ASSET_DOCUMENTS_DIR + "/" + storedFileName;
+        try {
+            Resource resource = fileStorageService.loadFileAsResource(relativePath);
+            byte[] rawBytes;
+            try (InputStream in = resource.getInputStream()) {
+                rawBytes = in.readAllBytes();
+            }
+            byte[] encryptedBytes = encryptionService.encryptBytesWithKey(rawBytes, assetAesKey);
+            fileStorageService.overwriteFile(relativePath, encryptedBytes, "application/octet-stream");
+        } catch (Exception e) {
+            logger.warn("Could not encrypt document {} with asset key: {}", storedFileName, e.getMessage());
+        }
+    }
+
+    private void reEncryptStoredDocumentWithNewKey(String storedFileName, String oldAesKey, String newAesKey) {
+        if (fileStorageService == null || storedFileName == null || storedFileName.isBlank()) {
+            return;
+        }
+        String relativePath = ASSET_DOCUMENTS_DIR + "/" + storedFileName;
+        try {
+            Resource resource = fileStorageService.loadFileAsResource(relativePath);
+            byte[] currentEncryptedBytes;
+            try (InputStream in = resource.getInputStream()) {
+                currentEncryptedBytes = in.readAllBytes();
+            }
+            byte[] plainBytes = encryptionService.decryptBytesWithKey(currentEncryptedBytes, oldAesKey);
+            byte[] reEncryptedBytes = encryptionService.encryptBytesWithKey(plainBytes, newAesKey);
+            fileStorageService.overwriteFile(relativePath, reEncryptedBytes, "application/octet-stream");
+        } catch (Exception e) {
+            logger.warn("Could not re-encrypt document {} during key rotation: {}", storedFileName, e.getMessage());
         }
     }
 
